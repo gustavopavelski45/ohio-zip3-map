@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "contour-v4";
+const DATA_VERSION = "contour-v6";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -59,6 +59,25 @@ function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(Math.round(numericValue));
 }
 
+function formatRank(rankValue, totalValue) {
+  const rank = Number(rankValue);
+  const total = Number(totalValue);
+  if (!Number.isFinite(rank) || !Number.isFinite(total) || total <= 0) {
+    return "N/D";
+  }
+
+  return `#${rank}/${total}`;
+}
+
+function topZipSummary(zone) {
+  if (!zone || !zone.topZip5 || !Number.isFinite(Number(zone.topZipPopulation)) || zone.topZipPopulation <= 0) {
+    return "N/D";
+  }
+
+  const cityPart = zone.topZipCity ? ` • ${zone.topZipCity}` : "";
+  return `${zone.topZip5}${cityPart} • ${formatNumber(zone.topZipPopulation)} hab`;
+}
+
 function normalizeZoneId(value) {
   return String(value || "")
     .trim()
@@ -106,22 +125,22 @@ function styleForFeature(feature) {
 
   if (isSelected) {
     return {
-      color: "#7c2d12",
-      weight: 2.4,
-      opacity: 0.94,
+      color: "#3b1812",
+      weight: 2.8,
+      opacity: 1,
       fillColor: colorForZone(zone),
-      fillOpacity: 0.62,
+      fillOpacity: 0.42,
       dashArray: null
     };
   }
 
   if (isMuted) {
     return {
-      color: "#8ca3c8",
-      weight: 0.8,
-      opacity: 0.32,
+      color: "#b9c6dc",
+      weight: 0.45,
+      opacity: 0.12,
       fillColor: colorForZone(zone),
-      fillOpacity: 0.08,
+      fillOpacity: 0.015,
       dashArray: null
     };
   }
@@ -139,10 +158,10 @@ function styleForFeature(feature) {
 
   return {
     color: "#1d2d45",
-    weight: 0.9,
-    opacity: 0.72,
+    weight: 0.7,
+    opacity: 0.6,
     fillColor: colorForZone(zone),
-    fillOpacity: 0.34,
+    fillOpacity: 0.22,
     dashArray: null
   };
 }
@@ -166,13 +185,17 @@ function formatPopup(feature) {
   }
 
   const hotspotLabel = zone.isPopulationHotspot ? "Sim" : "Não";
+  const stateRankLabel = formatRank(zone.statePopulationRank, zone.stateZoneCount);
+  const topZipLabel = topZipSummary(zone);
 
   return `
     <strong>${escapeHtml(zone.label)}</strong><br/>
     Estado: <strong>${escapeHtml(zone.stateName)} (${escapeHtml(zone.state)})</strong><br/>
     ZIP5 na zona: ${formatNumber(zone.zipCount)}<br/>
     População estimada: <strong>${formatNumber(zone.population)}</strong><br/>
-    Rank de população: #${formatNumber(zone.populationRank)}<br/>
+    Rank geral: #${formatNumber(zone.populationRank)}<br/>
+    Rank no estado: <strong>${escapeHtml(stateRankLabel)}</strong><br/>
+    ZIP líder da zona: <strong>${escapeHtml(topZipLabel)}</strong><br/>
     Hotspot: ${hotspotLabel}<br/>
     <small>${escapeHtml(cityPreview(zone.cities, 7))}</small>
   `;
@@ -184,6 +207,19 @@ function refreshStyles() {
   }
 
   state.zoneLayer.setStyle(styleForFeature);
+  bringSelectionToFront();
+}
+
+function bringSelectionToFront() {
+  if (!state.zoneLayer || !state.selectedZoneId) {
+    return;
+  }
+
+  state.zoneLayer.eachLayer((layer) => {
+    if (layer?.feature?.properties?.zoneId === state.selectedZoneId) {
+      layer.bringToFront();
+    }
+  });
 }
 
 function getActiveZones() {
@@ -211,7 +247,8 @@ function refreshStats() {
   }
 
   statsEl.innerHTML = `<strong>${escapeHtml(zone.label)}</strong> • ${escapeHtml(zone.stateName)}<br/>` +
-    `${formatNumber(zone.population)} habitantes • ${formatNumber(zone.zipCount)} ZIP5 • rank #${zone.populationRank}`;
+    `${formatNumber(zone.population)} habitantes • ${formatNumber(zone.zipCount)} ZIP5 • rank geral #${zone.populationRank} • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)}<br/>` +
+    `ZIP líder: ${escapeHtml(topZipSummary(zone))}`;
 }
 
 function updateSelection(zoneId) {
@@ -312,7 +349,8 @@ function renderZoneList() {
         <span>${escapeHtml(zone.label)}</span>
         <span>${formatNumber(zone.population)}</span>
       </div>
-      <div class="zone-meta">${escapeHtml(zone.stateName)} • ${zone.zipCount} ZIP5 • rank #${zone.populationRank} ${hotspotTag}</div>
+      <div class="zone-meta">${escapeHtml(zone.stateName)} • ${zone.zipCount} ZIP5 • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)} • rank geral #${zone.populationRank} ${hotspotTag}</div>
+      <div class="zone-cities">ZIP líder: ${escapeHtml(topZipSummary(zone))}</div>
       <div class="zone-cities">${escapeHtml(cityPreview(zone.cities, 7))}</div>
     `;
 

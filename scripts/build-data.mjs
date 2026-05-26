@@ -139,6 +139,9 @@ function createZone(zoneId, state, stateName, zip3) {
     zip3,
     zips: new Set(),
     cities: new Set(),
+    topZip5: null,
+    topZipCity: null,
+    topZipPopulation: 0,
     latSum: 0,
     lngSum: 0,
     pointCount: 0,
@@ -311,6 +314,11 @@ async function main() {
       if (city) {
         zone.cities.add(city);
       }
+      if (population > zone.topZipPopulation) {
+        zone.topZipPopulation = population;
+        zone.topZip5 = zip5;
+        zone.topZipCity = city || null;
+      }
 
       includePoint(zone, latitude, longitude);
 
@@ -369,19 +377,50 @@ async function main() {
       longitude: average(zone.lngSum, zone.pointCount),
       population: zone.population,
       populationPerZip: zone.zips.size > 0 ? Math.round(zone.population / zone.zips.size) : 0,
+      topZip5: zone.topZip5,
+      topZipCity: zone.topZipCity,
+      topZipPopulation: zone.topZipPopulation,
       geometry: dissolveZoneGeometry(zone)
     }))
     .sort((a, b) => b.population - a.population || a.label.localeCompare(b.label));
 
   const hotspotCount = Math.max(1, Math.ceil(zones.length * 0.15));
   const hotspotSet = new Set(zones.slice(0, hotspotCount).map((zone) => zone.zoneId));
+  const stateRanksByZoneId = new Map();
+
+  const zonesByState = new Map();
+  for (const zone of zones) {
+    if (!zonesByState.has(zone.state)) {
+      zonesByState.set(zone.state, []);
+    }
+    zonesByState.get(zone.state).push(zone);
+  }
+
+  for (const [stateCode, stateZones] of zonesByState.entries()) {
+    stateZones.sort((a, b) => b.population - a.population || a.label.localeCompare(b.label));
+    const stateZoneCount = stateZones.length;
+
+    stateZones.forEach((zone, index) => {
+      stateRanksByZoneId.set(zone.zoneId, {
+        state: stateCode,
+        statePopulationRank: index + 1,
+        stateZoneCount
+      });
+    });
+  }
 
   const zonesWithRank = zones
-    .map((zone, index) => ({
-      ...zone,
-      populationRank: index + 1,
-      isPopulationHotspot: hotspotSet.has(zone.zoneId)
-    }))
+    .map((zone, index) => {
+      const stateRank = stateRanksByZoneId.get(zone.zoneId);
+
+      return {
+        ...zone,
+        populationRank: index + 1,
+        isPopulationHotspot: hotspotSet.has(zone.zoneId),
+        statePopulationRank: stateRank?.statePopulationRank ?? null,
+        stateZoneCount: stateRank?.stateZoneCount ?? null
+      };
+    })
     .sort((a, b) => a.label.localeCompare(b.label));
 
   const cities = [...cityMap.values()]
@@ -414,7 +453,12 @@ async function main() {
         zipCount: zone.zipCount,
         population: zone.population,
         populationPerZip: zone.populationPerZip,
+        topZip5: zone.topZip5,
+        topZipCity: zone.topZipCity,
+        topZipPopulation: zone.topZipPopulation,
         populationRank: zone.populationRank,
+        statePopulationRank: zone.statePopulationRank,
+        stateZoneCount: zone.stateZoneCount,
         isPopulationHotspot: zone.isPopulationHotspot
       }
     }))
@@ -433,7 +477,12 @@ async function main() {
     longitude: zone.longitude,
     population: zone.population,
     populationPerZip: zone.populationPerZip,
+    topZip5: zone.topZip5,
+    topZipCity: zone.topZipCity,
+    topZipPopulation: zone.topZipPopulation,
     populationRank: zone.populationRank,
+    statePopulationRank: zone.statePopulationRank,
+    stateZoneCount: zone.stateZoneCount,
     isPopulationHotspot: zone.isPopulationHotspot
   }));
 
