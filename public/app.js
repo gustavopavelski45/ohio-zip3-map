@@ -3,6 +3,8 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
+const DATA_VERSION = "contour-v4";
+
 L.control.zoom({ position: "topright" }).addTo(map);
 
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -428,7 +430,7 @@ function parseWorkZonesPayload(payload) {
 
 async function loadWorkZones() {
   try {
-    const workZonesResp = await fetch("./data/work_zones.json");
+    const workZonesResp = await fetch(`./data/work_zones.json?v=${DATA_VERSION}`);
     if (!workZonesResp.ok) {
       return;
     }
@@ -469,10 +471,10 @@ function setupControls() {
 
 async function loadData() {
   const [geoResp, zonesResp, citiesResp, statesResp] = await Promise.all([
-    fetch("./data/coverage_zip3.geojson"),
-    fetch("./data/coverage_zip3_zones.json"),
-    fetch("./data/coverage_cities.json"),
-    fetch("./data/coverage_states.json")
+    fetch(`./data/coverage_zip3.geojson?v=${DATA_VERSION}`),
+    fetch(`./data/coverage_zip3_zones.json?v=${DATA_VERSION}`),
+    fetch(`./data/coverage_cities.json?v=${DATA_VERSION}`),
+    fetch(`./data/coverage_states.json?v=${DATA_VERSION}`)
   ]);
 
   if (!geoResp.ok || !zonesResp.ok || !citiesResp.ok || !statesResp.ok) {

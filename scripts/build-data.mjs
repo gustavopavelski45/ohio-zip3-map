@@ -5,9 +5,12 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { lookupZip } = require("zipcode-detail-lookup");
+const union = require("@turf/union").default;
+const simplify = require("@turf/simplify").default;
+const { featureCollection } = require("@turf/helpers");
 
 const COORD_PRECISION = 5;
-const POINT_SAMPLE_STEP = 12;
+const SIMPLIFY_TOLERANCE = 0.0012;
 
 const SOURCE_BASE_URL =
   "https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master";
@@ -40,6 +43,94 @@ function roundCoord(value) {
   return Number(value.toFixed(COORD_PRECISION));
 }
 
+function cloneGeometry(geometry) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(geometry);
+  }
+
+  return JSON.parse(JSON.stringify(geometry));
+}
+
+function normalizeCoordinates(coordinates) {
+  if (!Array.isArray(coordinates)) {
+    return coordinates;
+  }
+
+  if (coordinates.length > 0 && typeof coordinates[0] === "number") {
+    return coordinates.map((value, index) => {
+      if (index < 2 && Number.isFinite(value)) {
+        return roundCoord(value);
+      }
+
+      return value;
+    });
+  }
+
+  return coordinates.map((entry) => normalizeCoordinates(entry));
+}
+
+function normalizeGeometry(geometry) {
+  if (!geometry || typeof geometry !== "object") {
+    return geometry;
+  }
+
+  if (geometry.type === "GeometryCollection" && Array.isArray(geometry.geometries)) {
+    return {
+      type: "GeometryCollection",
+      geometries: geometry.geometries.map((entry) => normalizeGeometry(entry))
+    };
+  }
+
+  if (!("coordinates" in geometry)) {
+    return geometry;
+  }
+
+  return {
+    type: geometry.type,
+    coordinates: normalizeCoordinates(geometry.coordinates)
+  };
+}
+
+function simplifyGeometry(geometry) {
+  try {
+    const feature = {
+      type: "Feature",
+      properties: {},
+      geometry
+    };
+
+    const simplified = simplify(feature, {
+      tolerance: SIMPLIFY_TOLERANCE,
+      highQuality: false,
+      mutate: false
+    });
+
+    if (simplified && simplified.geometry) {
+      return simplified.geometry;
+    }
+  } catch {
+    // Keep original geometry when simplification fails.
+  }
+
+  return geometry;
+}
+
+function extractPolygonGeometries(geometry) {
+  if (!geometry || typeof geometry !== "object") {
+    return [];
+  }
+
+  if (geometry.type === "Polygon" || geometry.type === "MultiPolygon") {
+    return [geometry];
+  }
+
+  if (geometry.type === "GeometryCollection" && Array.isArray(geometry.geometries)) {
+    return geometry.geometries.flatMap((entry) => extractPolygonGeometries(entry));
+  }
+
+  return [];
+}
+
 function createZone(zoneId, state, stateName, zip3) {
   return {
     zoneId,
@@ -52,8 +143,7 @@ function createZone(zoneId, state, stateName, zip3) {
     lngSum: 0,
     pointCount: 0,
     population: 0,
-    sampledPoints: [],
-    sampleCursor: 0
+    geometryFeatures: []
   };
 }
 
@@ -91,139 +181,65 @@ function average(sum, count) {
   return Number((sum / count).toFixed(6));
 }
 
-function cross(o, a, b) {
-  return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-}
-
-function convexHull(points) {
-  if (points.length <= 1) {
-    return points;
-  }
-
-  const sorted = [...points].sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]));
-  const lower = [];
-  for (const point of sorted) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
-      lower.pop();
-    }
-    lower.push(point);
-  }
-
-  const upper = [];
-  for (let index = sorted.length - 1; index >= 0; index -= 1) {
-    const point = sorted[index];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
-      upper.pop();
-    }
-    upper.push(point);
-  }
-
-  lower.pop();
-  upper.pop();
-
-  return lower.concat(upper);
-}
-
-function uniquePoints(points) {
-  const seen = new Set();
-  const unique = [];
-
-  for (const [lon, lat] of points) {
-    const key = `${lon.toFixed(COORD_PRECISION)}|${lat.toFixed(COORD_PRECISION)}`;
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    unique.push([lon, lat]);
-  }
-
-  return unique;
-}
-
 function fallbackSquare(longitude, latitude) {
   const delta = 0.08;
   const lon = Number.isFinite(longitude) ? longitude : -83;
   const lat = Number.isFinite(latitude) ? latitude : 40;
 
-  return [
-    [roundCoord(lon - delta), roundCoord(lat - delta)],
-    [roundCoord(lon + delta), roundCoord(lat - delta)],
-    [roundCoord(lon + delta), roundCoord(lat + delta)],
-    [roundCoord(lon - delta), roundCoord(lat + delta)],
-    [roundCoord(lon - delta), roundCoord(lat - delta)]
-  ];
-}
-
-function toZoneGeometry(zone) {
-  const unique = uniquePoints(zone.sampledPoints);
-
-  if (unique.length < 3) {
-    return {
-      type: "Polygon",
-      coordinates: [fallbackSquare(average(zone.lngSum, zone.pointCount), average(zone.latSum, zone.pointCount))]
-    };
-  }
-
-  const hull = convexHull(unique);
-  if (hull.length < 3) {
-    return {
-      type: "Polygon",
-      coordinates: [fallbackSquare(average(zone.lngSum, zone.pointCount), average(zone.latSum, zone.pointCount))]
-    };
-  }
-
-  const closedHull = [...hull, hull[0]];
-
   return {
     type: "Polygon",
-    coordinates: [closedHull]
+    coordinates: [[
+      [roundCoord(lon - delta), roundCoord(lat - delta)],
+      [roundCoord(lon + delta), roundCoord(lat - delta)],
+      [roundCoord(lon + delta), roundCoord(lat + delta)],
+      [roundCoord(lon - delta), roundCoord(lat + delta)],
+      [roundCoord(lon - delta), roundCoord(lat - delta)]
+    ]]
   };
 }
 
-function collectGeometryPoints(geometry, zone) {
-  if (!geometry || typeof geometry !== "object") {
-    return;
+function dissolveZoneGeometry(zone) {
+  if (zone.geometryFeatures.length === 0) {
+    return fallbackSquare(average(zone.lngSum, zone.pointCount), average(zone.latSum, zone.pointCount));
   }
 
-  if (geometry.type === "GeometryCollection" && Array.isArray(geometry.geometries)) {
-    for (const subGeometry of geometry.geometries) {
-      collectGeometryPoints(subGeometry, zone);
-    }
-    return;
+  if (zone.geometryFeatures.length === 1) {
+    return normalizeGeometry(simplifyGeometry(zone.geometryFeatures[0].geometry));
   }
 
-  const walk = (coordinates) => {
-    if (!Array.isArray(coordinates)) {
-      return;
+  try {
+    const dissolved = union(featureCollection(zone.geometryFeatures));
+    if (dissolved && dissolved.geometry) {
+      return normalizeGeometry(simplifyGeometry(dissolved.geometry));
     }
+  } catch (error) {
+    console.warn(`Zone ${zone.zoneId}: bulk dissolve failed (${error.message}). Retrying incrementally.`);
+  }
 
-    if (
-      coordinates.length >= 2 &&
-      typeof coordinates[0] === "number" &&
-      typeof coordinates[1] === "number"
-    ) {
-      const lon = coordinates[0];
-      const lat = coordinates[1];
+  let merged = zone.geometryFeatures[0];
 
-      zone.sampleCursor += 1;
-      if (
-        zone.sampleCursor % POINT_SAMPLE_STEP === 0 &&
-        Number.isFinite(lon) &&
-        Number.isFinite(lat)
-      ) {
-        zone.sampledPoints.push([roundCoord(lon), roundCoord(lat)]);
+  for (let index = 1; index < zone.geometryFeatures.length; index += 1) {
+    const nextFeature = zone.geometryFeatures[index];
+
+    try {
+      const candidate = union(featureCollection([merged, nextFeature]));
+      if (candidate && candidate.geometry) {
+        merged = {
+          type: "Feature",
+          properties: {},
+          geometry: candidate.geometry
+        };
       }
-
-      return;
+    } catch {
+      // Ignore one-off invalid geometry and keep merging the rest.
     }
+  }
 
-    for (const next of coordinates) {
-      walk(next);
-    }
-  };
+  if (merged && merged.geometry) {
+    return normalizeGeometry(simplifyGeometry(merged.geometry));
+  }
 
-  walk(geometry.coordinates);
+  return fallbackSquare(average(zone.lngSum, zone.pointCount), average(zone.latSum, zone.pointCount));
 }
 
 async function downloadStateGeojson(file) {
@@ -297,7 +313,15 @@ async function main() {
       }
 
       includePoint(zone, latitude, longitude);
-      collectGeometryPoints(feature.geometry, zone);
+
+      const polygonGeometries = extractPolygonGeometries(feature.geometry);
+      for (const geometry of polygonGeometries) {
+        zone.geometryFeatures.push({
+          type: "Feature",
+          properties: {},
+          geometry: cloneGeometry(geometry)
+        });
+      }
 
       if (city) {
         const cityKey = `${state}|${city}`;
@@ -329,6 +353,8 @@ async function main() {
     console.log(`${state}: ${featureCount} ZIP5 processed`);
   }
 
+  console.log("Dissolving ZIP5 boundaries into ZIP3 zone contours...");
+
   const zones = [...zoneMap.values()]
     .map((zone) => ({
       zoneId: zone.zoneId,
@@ -343,7 +369,7 @@ async function main() {
       longitude: average(zone.lngSum, zone.pointCount),
       population: zone.population,
       populationPerZip: zone.zips.size > 0 ? Math.round(zone.population / zone.zips.size) : 0,
-      geometry: toZoneGeometry(zone)
+      geometry: dissolveZoneGeometry(zone)
     }))
     .sort((a, b) => b.population - a.population || a.label.localeCompare(b.label));
 

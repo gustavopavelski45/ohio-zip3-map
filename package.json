@@ -10,6 +10,9 @@
     "dev": "npm run prepare-data && npm run start"
   },
   "dependencies": {
+    "@turf/helpers": "^7.3.5",
+    "@turf/simplify": "^7.3.5",
+    "@turf/union": "^7.3.5",
     "zipcode-detail-lookup": "^1.1.9"
   }
 }
