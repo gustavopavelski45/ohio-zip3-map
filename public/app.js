@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v2";
+const DATA_VERSION = "all-us-v3";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -96,6 +96,15 @@ function formatScore(value) {
   return `${numericValue.toFixed(1)}/100`;
 }
 
+function formatPercent(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return "N/D";
+  }
+
+  return `${numericValue.toFixed(2)}%`;
+}
+
 function topZipSummary(zone) {
   if (!zone || !zone.topZip5 || !Number.isFinite(Number(zone.topZipPopulation)) || zone.topZipPopulation <= 0) {
     return "N/D";
@@ -145,9 +154,17 @@ function isMortgageMode() {
   return state.mode === "mortgage" && state.hasMortgageData;
 }
 
+function isDelinquencyMode() {
+  return state.mode === "delinquency" && state.hasMortgageData;
+}
+
 function isZoneHotspot(zone) {
   if (!zone) {
     return false;
+  }
+
+  if (isDelinquencyMode()) {
+    return Boolean(zone.isDelinquencyHotspot);
   }
 
   if (isMortgageMode()) {
@@ -245,6 +262,20 @@ function mortgageSummaryBlock(zone) {
   `;
 }
 
+function delinquencySummaryBlock(zone) {
+  if (!zone.hasMortgageData) {
+    return "Proxy de delinquency indisponivel";
+  }
+
+  const stateDelinquencyRank = formatRank(zone.delinquencyEstimatedStateRank, zone.delinquencyStateZoneCount);
+  return `
+    Proxy delinquency: <strong>${formatNumber(zone.estimatedDelinquentLoans)}</strong> loans<br/>
+    Volume proxy: <strong>${escapeHtml(formatCurrency(zone.estimatedDelinquentVolume))}</strong><br/>
+    Taxa estimada: <strong>${escapeHtml(formatPercent(zone.estimatedDelinquencyRatePct))}</strong> • risco ${escapeHtml(formatScore(zone.delinquencyRiskScore))}<br/>
+    Rank delinquency: #${formatNumber(zone.delinquencyEstimatedRank)} (geral) • ${escapeHtml(stateDelinquencyRank)} (estado)
+  `;
+}
+
 function formatPopup(feature) {
   const zone = state.zoneById.get(feature.properties.zoneId);
   if (!zone) {
@@ -266,6 +297,7 @@ function formatPopup(feature) {
     ZIP lider (pop): <strong>${escapeHtml(topZipLabel)}</strong><br/>
     ZIP com mais casas: <strong>${escapeHtml(topHousingLabel)}</strong><br/>
     ${mortgageSummaryBlock(zone)}<br/>
+    ${delinquencySummaryBlock(zone)}<br/>
     Hotspot ativo no modo atual: ${hotspotLabel}<br/>
     <small>${escapeHtml(cityPreview(zone.cities, 7))}</small>
   `;
@@ -301,6 +333,14 @@ function refreshModeText() {
     return;
   }
 
+  if (isDelinquencyMode()) {
+    modeHintEl.textContent = "Modo Delinquency Proxy: estimativa de inadimplencia por volume, composicao e intensidade local.";
+    if (legendHotspotLabelEl) {
+      legendHotspotLabelEl.textContent = "Hotspot de delinquency proxy";
+    }
+    return;
+  }
+
   if (isMortgageMode()) {
     modeHintEl.textContent = "Modo Mortgage: destaque por score de oportunidade e volume estimado de loans.";
     if (legendHotspotLabelEl) {
@@ -325,6 +365,36 @@ function refreshStats() {
   const activeZoneCount = activeZones.length;
   const activeStates = new Set(activeZones.map((zone) => zone.state));
   const hotspotCount = activeZones.filter((zone) => isZoneHotspot(zone)).length;
+
+  if (isDelinquencyMode()) {
+    const totalEstimatedDelinquentLoans = activeZones.reduce(
+      (sum, zone) => sum + (zone.estimatedDelinquentLoans || 0),
+      0
+    );
+    const totalEstimatedDelinquentVolume = activeZones.reduce(
+      (sum, zone) => sum + (zone.estimatedDelinquentVolume || 0),
+      0
+    );
+
+    if (!state.selectedZoneId) {
+      statsEl.innerHTML = `${activeZoneCount} zonas ZIP3 ativas em ${activeStates.size} estados<br/>` +
+        `${formatNumber(totalEstimatedDelinquentLoans)} loans delinquent (proxy) • ${escapeHtml(formatCurrency(totalEstimatedDelinquentVolume))} • ${hotspotCount} hotspots`;
+      return;
+    }
+
+    const zone = state.zoneById.get(state.selectedZoneId);
+    if (!zone) {
+      statsEl.innerHTML = `${activeZoneCount} zonas ZIP3 ativas em ${activeStates.size} estados<br/>` +
+        `${formatNumber(totalEstimatedDelinquentLoans)} loans delinquent (proxy) • ${escapeHtml(formatCurrency(totalEstimatedDelinquentVolume))} • ${hotspotCount} hotspots`;
+      return;
+    }
+
+    const stateRank = formatRank(zone.delinquencyEstimatedStateRank, zone.delinquencyStateZoneCount);
+    statsEl.innerHTML = `<strong>${escapeHtml(zone.label)}</strong> • ${escapeHtml(zone.stateName)}<br/>` +
+      `${formatNumber(zone.estimatedDelinquentLoans)} loans delinquent (proxy) • taxa ${escapeHtml(formatPercent(zone.estimatedDelinquencyRatePct))} • risco ${escapeHtml(formatScore(zone.delinquencyRiskScore))}<br/>` +
+      `rank proxy #${formatNumber(zone.delinquencyEstimatedRank)} • rank estado ${escapeHtml(stateRank)} • rank risco #${formatNumber(zone.delinquencyRiskRank)}`;
+    return;
+  }
 
   if (isMortgageMode()) {
     const totalMortgageCount = activeZones.reduce((sum, zone) => sum + (zone.mortgageOriginationsCount || 0), 0);
@@ -435,6 +505,14 @@ function zoneMatchesFilter(zone, query) {
 }
 
 function compareZoneByMode(a, b) {
+  if (isDelinquencyMode()) {
+    return (
+      (b.estimatedDelinquentLoans || 0) - (a.estimatedDelinquentLoans || 0) ||
+      (b.delinquencyRiskScore || 0) - (a.delinquencyRiskScore || 0) ||
+      a.label.localeCompare(b.label)
+    );
+  }
+
   if (isMortgageMode()) {
     return (
       (b.mortgageOpportunityScore || 0) - (a.mortgageOpportunityScore || 0) ||
@@ -475,7 +553,17 @@ function renderZoneList() {
 
     const hotspotTag = isZoneHotspot(zone) ? `<span class="zone-tag">HOT</span>` : "";
 
-    if (isMortgageMode()) {
+    if (isDelinquencyMode()) {
+      button.innerHTML = `
+        <div class="zone-title">
+          <span>${escapeHtml(zone.label)}</span>
+          <span>${formatNumber(zone.estimatedDelinquentLoans)} delinquent</span>
+        </div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • taxa ${escapeHtml(formatPercent(zone.estimatedDelinquencyRatePct))} • risco ${escapeHtml(formatScore(zone.delinquencyRiskScore))} ${hotspotTag}</div>
+        <div class="zone-cities">Volume proxy: ${escapeHtml(formatCurrency(zone.estimatedDelinquentVolume))} • rank estado ${formatRank(zone.delinquencyEstimatedStateRank, zone.delinquencyStateZoneCount)}</div>
+        <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
+      `;
+    } else if (isMortgageMode()) {
       button.innerHTML = `
         <div class="zone-title">
           <span>${escapeHtml(zone.label)}</span>
@@ -634,7 +722,18 @@ function setupControls() {
   });
 
   modeSelect.addEventListener("change", (event) => {
-    state.mode = event.target.value === "mortgage" ? "mortgage" : "population";
+    const nextMode = String(event.target.value || "population");
+    if (nextMode === "mortgage" || nextMode === "delinquency") {
+      state.mode = nextMode;
+    } else {
+      state.mode = "population";
+    }
+
+    if (!state.hasMortgageData && state.mode !== "population") {
+      state.mode = "population";
+      modeSelect.value = "population";
+    }
+
     refreshModeText();
     refreshStyles();
     renderZoneList();

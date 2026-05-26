@@ -10,6 +10,7 @@ Mapa interativo dos Estados Unidos por `ZIP3`, com:
 - ZIP5 lider (maior populacao) dentro de cada zona;
 - ZIP com mais casas estimadas dentro da zona;
 - modo `Mortgage Opportunity` com rank de volume de hipoteca e score de oportunidade;
+- modo `Delinquency Proxy` com estimativa de inadimplencia e rank de risco;
 - cidades exibidas no mapa e busca por estado/ZIP3/cidade.
 
 ## Requisitos
@@ -64,6 +65,8 @@ Para usar o modo de mortgage com dados reais:
 npm run prepare-mortgage-data
 npm run prepare-data
 ```
+
+Opcional: para recalibrar o proxy de inadimplencia sem alterar codigo, defina `DELINQUENCY_BASE_RATE` (ex.: `0.0335` para 3.35%) antes de rodar `prepare-data`.
 
 ## Definir zonas de trabalho
 

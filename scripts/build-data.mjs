@@ -13,6 +13,14 @@ const COORD_PRECISION = 5;
 const SIMPLIFY_TOLERANCE = 0.0012;
 const HOUSEHOLD_SIZE_ESTIMATE = 2.6;
 const HOTSPOT_RATIO = 0.15;
+const DELINQUENCY_BASE_RATE_RAW = Number.parseFloat(process.env.DELINQUENCY_BASE_RATE || "0.0335");
+const DELINQUENCY_BASE_RATE = Number.isFinite(DELINQUENCY_BASE_RATE_RAW)
+  ? DELINQUENCY_BASE_RATE_RAW
+  : 0.0335;
+const DELINQUENCY_MIN_RATE = 0.018;
+const DELINQUENCY_MAX_RATE = 0.09;
+const DELINQUENCY_BASE_RATE_SOURCE =
+  process.env.DELINQUENCY_BASE_RATE_SOURCE || "ICE First Look Apr/2026 (published May 26, 2026)";
 const HMDA_YEAR = Number.parseInt(process.env.HMDA_YEAR || "2024", 10);
 const HMDA_FILE_NAME = `hmda_county_${HMDA_YEAR}.json`;
 
@@ -407,7 +415,17 @@ function emptyMortgageMetrics() {
     isMortgageHotspot: false,
     mortgageOpportunityRank: null,
     mortgageOpportunityStateRank: null,
-    isMortgageOpportunityHotspot: false
+    isMortgageOpportunityHotspot: false,
+    estimatedDelinquencyRatePct: null,
+    estimatedDelinquentLoans: 0,
+    estimatedDelinquentVolume: 0,
+    delinquencyRiskScore: null,
+    delinquencyRiskRank: null,
+    delinquencyRiskStateRank: null,
+    delinquencyEstimatedRank: null,
+    delinquencyEstimatedStateRank: null,
+    delinquencyStateZoneCount: null,
+    isDelinquencyHotspot: false
   };
 }
 
@@ -532,7 +550,17 @@ function allocateCountyMortgageToZones(zones, countyMap) {
       isMortgageHotspot: false,
       mortgageOpportunityRank: null,
       mortgageOpportunityStateRank: null,
-      isMortgageOpportunityHotspot: false
+      isMortgageOpportunityHotspot: false,
+      estimatedDelinquencyRatePct: null,
+      estimatedDelinquentLoans: 0,
+      estimatedDelinquentVolume: 0,
+      delinquencyRiskScore: null,
+      delinquencyRiskRank: null,
+      delinquencyRiskStateRank: null,
+      delinquencyEstimatedRank: null,
+      delinquencyEstimatedStateRank: null,
+      delinquencyStateZoneCount: null,
+      isDelinquencyHotspot: false
     });
   }
 }
@@ -543,6 +571,14 @@ function logNormalized(value, maxValue) {
   }
 
   return Math.log1p(value) / Math.log1p(maxValue);
+}
+
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  return Math.min(max, Math.max(min, value));
 }
 
 function applyMortgageRankings(zones) {
@@ -653,6 +689,131 @@ function applyMortgageRankings(zones) {
 
     zonesInState.forEach((zone, index) => {
       zone.mortgageOpportunityStateRank = index + 1;
+    });
+  }
+}
+
+function applyDelinquencyProxyRankings(zones) {
+  if (zones.length === 0) {
+    return;
+  }
+
+  const maxLoansDensity = Math.max(...zones.map((zone) => zone.mortgageLoansPer10kResidents || 0), 1);
+  const maxAmountPerResident = Math.max(...zones.map((zone) => zone.mortgageAmountPerResident || 0), 1);
+
+  for (const zone of zones) {
+    const loans = Math.max(0, Number.parseFloat(String(zone.mortgageOriginationsCount || 0)) || 0);
+    const volume = Math.max(0, Number.parseFloat(String(zone.mortgageOriginationsAmount || 0)) || 0);
+
+    if (loans <= 0 || volume <= 0) {
+      zone.estimatedDelinquencyRatePct = 0;
+      zone.estimatedDelinquentLoans = 0;
+      zone.estimatedDelinquentVolume = 0;
+      zone.delinquencyRiskScore = 0;
+      continue;
+    }
+
+    const ownerOccupiedShare =
+      loans > 0 ? (zone.mortgageOwnerOccupiedCount || 0) / loans : 0;
+    const purchaseShare =
+      loans > 0 ? (zone.mortgagePurchaseCount || 0) / loans : 0;
+
+    const investorShare = clamp(1 - ownerOccupiedShare, 0, 1);
+    const refinanceShare = clamp(1 - purchaseShare, 0, 1);
+    const densityPressure = logNormalized(zone.mortgageLoansPer10kResidents || 0, maxLoansDensity);
+    const balancePressure = logNormalized(zone.mortgageAmountPerResident || 0, maxAmountPerResident);
+
+    const riskRaw =
+      investorShare * 0.35 +
+      refinanceShare * 0.2 +
+      densityPressure * 0.15 +
+      balancePressure * 0.3;
+
+    const rate = clamp(
+      DELINQUENCY_BASE_RATE * (0.65 + riskRaw * 1.1),
+      DELINQUENCY_MIN_RATE,
+      DELINQUENCY_MAX_RATE
+    );
+
+    zone.estimatedDelinquencyRatePct = Number((rate * 100).toFixed(2));
+    zone.estimatedDelinquentLoans = Math.round(loans * rate);
+    zone.estimatedDelinquentVolume = Math.round(volume * rate);
+    zone.delinquencyRiskScore = Number((riskRaw * 100).toFixed(2));
+  }
+
+  const rankedByEstimatedDelinquency = zones
+    .slice()
+    .sort(
+      (a, b) =>
+        b.estimatedDelinquentLoans - a.estimatedDelinquentLoans ||
+        b.estimatedDelinquentVolume - a.estimatedDelinquentVolume ||
+        a.label.localeCompare(b.label)
+    );
+
+  const delinquencyHotspotCount = Math.max(1, Math.ceil(rankedByEstimatedDelinquency.length * HOTSPOT_RATIO));
+  const delinquencyHotspotSet = new Set(
+    rankedByEstimatedDelinquency.slice(0, delinquencyHotspotCount).map((zone) => zone.zoneId)
+  );
+
+  rankedByEstimatedDelinquency.forEach((zone, index) => {
+    zone.delinquencyEstimatedRank = index + 1;
+    zone.isDelinquencyHotspot = delinquencyHotspotSet.has(zone.zoneId);
+  });
+
+  const estimatedByState = new Map();
+  for (const zone of rankedByEstimatedDelinquency) {
+    if (!estimatedByState.has(zone.state)) {
+      estimatedByState.set(zone.state, []);
+    }
+    estimatedByState.get(zone.state).push(zone);
+  }
+
+  for (const zonesInState of estimatedByState.values()) {
+    zonesInState.sort(
+      (a, b) =>
+        b.estimatedDelinquentLoans - a.estimatedDelinquentLoans ||
+        b.estimatedDelinquentVolume - a.estimatedDelinquentVolume ||
+        a.label.localeCompare(b.label)
+    );
+
+    const stateZoneCount = zonesInState.length;
+    zonesInState.forEach((zone, index) => {
+      zone.delinquencyEstimatedStateRank = index + 1;
+      zone.delinquencyStateZoneCount = stateZoneCount;
+    });
+  }
+
+  const rankedByDelinquencyRisk = zones
+    .slice()
+    .sort(
+      (a, b) =>
+        b.delinquencyRiskScore - a.delinquencyRiskScore ||
+        b.estimatedDelinquentLoans - a.estimatedDelinquentLoans ||
+        a.label.localeCompare(b.label)
+    );
+
+  rankedByDelinquencyRisk.forEach((zone, index) => {
+    zone.delinquencyRiskRank = index + 1;
+  });
+
+  const riskByState = new Map();
+  for (const zone of rankedByDelinquencyRisk) {
+    if (!riskByState.has(zone.state)) {
+      riskByState.set(zone.state, []);
+    }
+    riskByState.get(zone.state).push(zone);
+  }
+
+  for (const zonesInState of riskByState.values()) {
+    zonesInState.sort(
+      (a, b) =>
+        b.delinquencyRiskScore - a.delinquencyRiskScore ||
+        b.estimatedDelinquentLoans - a.estimatedDelinquentLoans ||
+        a.label.localeCompare(b.label)
+    );
+
+    zonesInState.forEach((zone, index) => {
+      zone.delinquencyRiskStateRank = index + 1;
     });
   }
 }
@@ -812,6 +973,7 @@ async function main() {
   if (hmda.hasMortgageData) {
     allocateCountyMortgageToZones(zones, hmda.countyMap);
     applyMortgageRankings(zones);
+    applyDelinquencyProxyRankings(zones);
   } else {
     assignFallbackMortgageFields(zones);
   }
@@ -908,6 +1070,16 @@ async function main() {
         mortgageOpportunityScore: zone.mortgageOpportunityScore,
         mortgageOpportunityRank: zone.mortgageOpportunityRank,
         mortgageOpportunityStateRank: zone.mortgageOpportunityStateRank,
+        estimatedDelinquencyRatePct: zone.estimatedDelinquencyRatePct,
+        estimatedDelinquentLoans: zone.estimatedDelinquentLoans,
+        estimatedDelinquentVolume: zone.estimatedDelinquentVolume,
+        delinquencyRiskScore: zone.delinquencyRiskScore,
+        delinquencyRiskRank: zone.delinquencyRiskRank,
+        delinquencyRiskStateRank: zone.delinquencyRiskStateRank,
+        delinquencyEstimatedRank: zone.delinquencyEstimatedRank,
+        delinquencyEstimatedStateRank: zone.delinquencyEstimatedStateRank,
+        delinquencyStateZoneCount: zone.delinquencyStateZoneCount,
+        isDelinquencyHotspot: zone.isDelinquencyHotspot,
         isMortgageHotspot: zone.isMortgageHotspot,
         isMortgageOpportunityHotspot: zone.isMortgageOpportunityHotspot,
         populationRank: zone.populationRank,
@@ -954,6 +1126,16 @@ async function main() {
     mortgageOpportunityScore: zone.mortgageOpportunityScore,
     mortgageOpportunityRank: zone.mortgageOpportunityRank,
     mortgageOpportunityStateRank: zone.mortgageOpportunityStateRank,
+    estimatedDelinquencyRatePct: zone.estimatedDelinquencyRatePct,
+    estimatedDelinquentLoans: zone.estimatedDelinquentLoans,
+    estimatedDelinquentVolume: zone.estimatedDelinquentVolume,
+    delinquencyRiskScore: zone.delinquencyRiskScore,
+    delinquencyRiskRank: zone.delinquencyRiskRank,
+    delinquencyRiskStateRank: zone.delinquencyRiskStateRank,
+    delinquencyEstimatedRank: zone.delinquencyEstimatedRank,
+    delinquencyEstimatedStateRank: zone.delinquencyEstimatedStateRank,
+    delinquencyStateZoneCount: zone.delinquencyStateZoneCount,
+    isDelinquencyHotspot: zone.isDelinquencyHotspot,
     isMortgageHotspot: zone.isMortgageHotspot,
     isMortgageOpportunityHotspot: zone.isMortgageOpportunityHotspot,
     populationRank: zone.populationRank,
@@ -971,6 +1153,12 @@ async function main() {
     const housingUnitsEstimate = stateZones.reduce((sum, zone) => sum + zone.housingUnitsEstimate, 0);
     const mortgageOriginationsCount = stateZones.reduce((sum, zone) => sum + zone.mortgageOriginationsCount, 0);
     const mortgageOriginationsAmount = stateZones.reduce((sum, zone) => sum + zone.mortgageOriginationsAmount, 0);
+    const estimatedDelinquentLoans = stateZones.reduce((sum, zone) => sum + zone.estimatedDelinquentLoans, 0);
+    const estimatedDelinquentVolume = stateZones.reduce((sum, zone) => sum + zone.estimatedDelinquentVolume, 0);
+    const delinquencyRiskScoreAvg =
+      stateZones.length > 0
+        ? stateZones.reduce((sum, zone) => sum + (zone.delinquencyRiskScore || 0), 0) / stateZones.length
+        : 0;
 
     return {
       state: stateConfig.state,
@@ -981,7 +1169,10 @@ async function main() {
       population,
       housingUnitsEstimate,
       mortgageOriginationsCount: hmda.hasMortgageData ? mortgageOriginationsCount : null,
-      mortgageOriginationsAmount: hmda.hasMortgageData ? mortgageOriginationsAmount : null
+      mortgageOriginationsAmount: hmda.hasMortgageData ? mortgageOriginationsAmount : null,
+      estimatedDelinquentLoans: hmda.hasMortgageData ? estimatedDelinquentLoans : null,
+      estimatedDelinquentVolume: hmda.hasMortgageData ? estimatedDelinquentVolume : null,
+      delinquencyRiskScoreAvg: hmda.hasMortgageData ? Number(delinquencyRiskScoreAvg.toFixed(2)) : null
     };
   });
 
@@ -1011,6 +1202,8 @@ async function main() {
   const totalHousingUnits = zonesForJson.reduce((sum, zone) => sum + zone.housingUnitsEstimate, 0);
   const totalMortgageLoans = zonesForJson.reduce((sum, zone) => sum + zone.mortgageOriginationsCount, 0);
   const totalMortgageAmount = zonesForJson.reduce((sum, zone) => sum + zone.mortgageOriginationsAmount, 0);
+  const totalEstimatedDelinquentLoans = zonesForJson.reduce((sum, zone) => sum + zone.estimatedDelinquentLoans, 0);
+  const totalEstimatedDelinquentVolume = zonesForJson.reduce((sum, zone) => sum + zone.estimatedDelinquentVolume, 0);
 
   console.log(`Generated ${zoneGeojson.features.length} ZIP3 zone features`);
   console.log(`Generated ${zonesForJson.length} ZIP3 zone summaries`);
@@ -1023,6 +1216,11 @@ async function main() {
     console.log(`Mortgage year: ${hmda.year}`);
     console.log(`Estimated originated loans (ZIP3 allocation): ${totalMortgageLoans.toLocaleString("en-US")}`);
     console.log(`Estimated originated volume (ZIP3 allocation): $${Math.round(totalMortgageAmount).toLocaleString("en-US")}`);
+    console.log(
+      `Delinquency proxy base rate: ${(DELINQUENCY_BASE_RATE * 100).toFixed(2)}% (${DELINQUENCY_BASE_RATE_SOURCE})`
+    );
+    console.log(`Estimated delinquent loans proxy: ${totalEstimatedDelinquentLoans.toLocaleString("en-US")}`);
+    console.log(`Estimated delinquent volume proxy: $${Math.round(totalEstimatedDelinquentVolume).toLocaleString("en-US")}`);
   }
 }
 
