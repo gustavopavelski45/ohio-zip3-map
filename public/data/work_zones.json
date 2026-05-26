@@ -1,0 +1,4 @@
+{
+  "name": "Zonas ativas multiestado",
+  "states": ["OH", "PA", "MI", "NJ", "NY", "NH", "NC", "SC", "CT", "GA", "DE", "MD", "CA", "FL", "VA", "KY"]
+}

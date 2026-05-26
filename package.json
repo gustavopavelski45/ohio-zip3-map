@@ -1,0 +1,15 @@
+{
+  "name": "ohio-zip3-map",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Interactive multi-state ZIP3 coverage map with city labels and population hotspots",
+  "scripts": {
+    "prepare-data": "node scripts/build-data.mjs",
+    "start": "node server.js",
+    "dev": "npm run prepare-data && npm run start"
+  },
+  "dependencies": {
+    "zipcode-detail-lookup": "^1.1.9"
+  }
+}
