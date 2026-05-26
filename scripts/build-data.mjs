@@ -23,6 +23,7 @@ const DELINQUENCY_BASE_RATE_SOURCE =
   process.env.DELINQUENCY_BASE_RATE_SOURCE || "ICE First Look Apr/2026 (published May 26, 2026)";
 const HMDA_YEAR = Number.parseInt(process.env.HMDA_YEAR || "2024", 10);
 const HMDA_FILE_NAME = `hmda_county_${HMDA_YEAR}.json`;
+const CFPB_FILE_NAME = process.env.CFPB_FILE_NAME || "cfpb_mortgage_distress_12m.json";
 
 const SOURCE_BASE_URL =
   "https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master";
@@ -199,6 +200,13 @@ function normalizeCountyFips(value) {
   }
 
   return null;
+}
+
+function normalizeZoneId(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replaceAll(/\s+/g, "");
 }
 
 function parseCountyWeights(lookup) {
@@ -429,6 +437,28 @@ function emptyMortgageMetrics() {
   };
 }
 
+function emptyCfpbDistressMetrics() {
+  return {
+    hasCfpbDistressData: false,
+    cfpbDistressLookbackMonths: null,
+    cfpbDistressDateReceivedMin: null,
+    cfpbDistressIssueList: [],
+    cfpbDistressLastUpdated: null,
+    cfpbDistressLatestComplaintDate: null,
+    cfpbDistressComplaintCount: 0,
+    cfpbDistressUntimelyCount: 0,
+    cfpbDistressStrugglingCount: 0,
+    cfpbDistressPaymentTroubleCount: 0,
+    cfpbDistressComplaintsPer100k: 0,
+    cfpbDistressUntimelySharePct: 0,
+    cfpbDistressScore: null,
+    cfpbDistressRank: null,
+    cfpbDistressStateRank: null,
+    cfpbDistressStateZoneCount: null,
+    isCfpbDistressHotspot: false
+  };
+}
+
 async function loadHmdaCountyMap(outputDir) {
   const filePath = path.join(outputDir, HMDA_FILE_NAME);
 
@@ -479,6 +509,77 @@ async function loadHmdaCountyMap(outputDir) {
       hasMortgageData: false,
       year: HMDA_YEAR,
       countyMap: new Map(),
+      totals: null
+    };
+  }
+}
+
+async function loadCfpbDistressMap(outputDir) {
+  const filePath = path.join(outputDir, CFPB_FILE_NAME);
+
+  try {
+    const raw = await fs.readFile(filePath, "utf-8");
+    const payload = JSON.parse(raw);
+
+    if (!Array.isArray(payload?.zones)) {
+      return {
+        hasData: false,
+        lookbackMonths: null,
+        dateReceivedMin: null,
+        issueList: [],
+        lastUpdated: null,
+        zoneMap: new Map(),
+        totals: null
+      };
+    }
+
+    const zoneMap = new Map();
+    for (const zone of payload.zones) {
+      const zoneId = normalizeZoneId(zone?.zoneId);
+      const state = String(zone?.state || "").trim().toUpperCase();
+      const zip3 = String(zone?.zip3 || "").trim().padStart(3, "0");
+      if (!zoneId || !/^[A-Z]{2}-\d{3}$/.test(zoneId)) {
+        continue;
+      }
+
+      zoneMap.set(zoneId, {
+        zoneId,
+        state,
+        zip3,
+        complaintCount: Math.max(0, Number.parseInt(String(zone?.complaintCount || 0), 10) || 0),
+        untimelyCount: Math.max(0, Number.parseInt(String(zone?.untimelyCount || 0), 10) || 0),
+        strugglingCount: Math.max(0, Number.parseInt(String(zone?.strugglingCount || 0), 10) || 0),
+        paymentTroubleCount: Math.max(0, Number.parseInt(String(zone?.paymentTroubleCount || 0), 10) || 0),
+        latestComplaintDate: zone?.latestComplaintDate ? String(zone.latestComplaintDate) : null
+      });
+    }
+
+    return {
+      hasData: zoneMap.size > 0,
+      lookbackMonths:
+        Number.parseInt(String(payload?.source?.lookbackMonths || 0), 10) > 0
+          ? Number.parseInt(String(payload?.source?.lookbackMonths || 0), 10)
+          : null,
+      dateReceivedMin: payload?.source?.dateReceivedMin ? String(payload.source.dateReceivedMin) : null,
+      issueList: Array.isArray(payload?.source?.issues)
+        ? payload.source.issues.map((entry) => String(entry)).filter(Boolean)
+        : [],
+      lastUpdated: payload?.source?.apiLastUpdated ? String(payload.source.apiLastUpdated) : null,
+      zoneMap,
+      totals: payload?.totals || null
+    };
+  } catch (error) {
+    if (error && error.code !== "ENOENT") {
+      console.warn(`Could not parse ${CFPB_FILE_NAME}: ${error.message}`);
+    }
+
+    return {
+      hasData: false,
+      lookbackMonths: null,
+      dateReceivedMin: null,
+      issueList: [],
+      lastUpdated: null,
+      zoneMap: new Map(),
       totals: null
     };
   }
@@ -818,9 +919,131 @@ function applyDelinquencyProxyRankings(zones) {
   }
 }
 
+function applyCfpbDistressMetrics(zones, cfpbDistress) {
+  const zoneMap = cfpbDistress?.zoneMap || new Map();
+
+  for (const zone of zones) {
+    const cfpbZone = zoneMap.get(zone.zoneId);
+
+    if (!cfpbZone) {
+      Object.assign(zone, {
+        ...emptyCfpbDistressMetrics(),
+        hasCfpbDistressData: cfpbDistress.hasData,
+        cfpbDistressLookbackMonths: cfpbDistress.lookbackMonths,
+        cfpbDistressDateReceivedMin: cfpbDistress.dateReceivedMin,
+        cfpbDistressIssueList: cfpbDistress.issueList,
+        cfpbDistressLastUpdated: cfpbDistress.lastUpdated
+      });
+      continue;
+    }
+
+    const complaintsPer100k =
+      zone.population > 0 ? (cfpbZone.complaintCount * 100000) / zone.population : 0;
+    const untimelySharePct =
+      cfpbZone.complaintCount > 0 ? (cfpbZone.untimelyCount * 100) / cfpbZone.complaintCount : 0;
+
+    Object.assign(zone, {
+      hasCfpbDistressData: cfpbDistress.hasData,
+      cfpbDistressLookbackMonths: cfpbDistress.lookbackMonths,
+      cfpbDistressDateReceivedMin: cfpbDistress.dateReceivedMin,
+      cfpbDistressIssueList: cfpbDistress.issueList,
+      cfpbDistressLastUpdated: cfpbDistress.lastUpdated,
+      cfpbDistressLatestComplaintDate: cfpbZone.latestComplaintDate,
+      cfpbDistressComplaintCount: cfpbZone.complaintCount,
+      cfpbDistressUntimelyCount: cfpbZone.untimelyCount,
+      cfpbDistressStrugglingCount: cfpbZone.strugglingCount,
+      cfpbDistressPaymentTroubleCount: cfpbZone.paymentTroubleCount,
+      cfpbDistressComplaintsPer100k: Number(complaintsPer100k.toFixed(2)),
+      cfpbDistressUntimelySharePct: Number(untimelySharePct.toFixed(2)),
+      cfpbDistressScore: null,
+      cfpbDistressRank: null,
+      cfpbDistressStateRank: null,
+      cfpbDistressStateZoneCount: null,
+      isCfpbDistressHotspot: false
+    });
+  }
+}
+
+function applyCfpbDistressRankings(zones) {
+  if (zones.length === 0) {
+    return;
+  }
+
+  const maxCount = Math.max(...zones.map((zone) => zone.cfpbDistressComplaintCount || 0), 1);
+  const maxPer100k = Math.max(...zones.map((zone) => zone.cfpbDistressComplaintsPer100k || 0), 1);
+
+  for (const zone of zones) {
+    const count = Math.max(0, Number.parseFloat(String(zone.cfpbDistressComplaintCount || 0)) || 0);
+    const per100k = Math.max(0, Number.parseFloat(String(zone.cfpbDistressComplaintsPer100k || 0)) || 0);
+    const untimelyShare = clamp(
+      (Number.parseFloat(String(zone.cfpbDistressUntimelySharePct || 0)) || 0) / 100,
+      0,
+      1
+    );
+    const strugglingShare =
+      count > 0
+        ? clamp((Number.parseFloat(String(zone.cfpbDistressStrugglingCount || 0)) || 0) / count, 0, 1)
+        : 0;
+
+    const riskRaw =
+      logNormalized(count, maxCount) * 0.45 +
+      logNormalized(per100k, maxPer100k) * 0.35 +
+      untimelyShare * 0.15 +
+      strugglingShare * 0.05;
+
+    zone.cfpbDistressScore = Number((riskRaw * 100).toFixed(2));
+  }
+
+  const ranked = zones
+    .slice()
+    .sort(
+      (a, b) =>
+        (b.cfpbDistressScore || 0) - (a.cfpbDistressScore || 0) ||
+        (b.cfpbDistressComplaintCount || 0) - (a.cfpbDistressComplaintCount || 0) ||
+        a.label.localeCompare(b.label)
+    );
+
+  const hotspotCount = Math.max(1, Math.ceil(ranked.length * HOTSPOT_RATIO));
+  const hotspotSet = new Set(ranked.slice(0, hotspotCount).map((zone) => zone.zoneId));
+
+  ranked.forEach((zone, index) => {
+    zone.cfpbDistressRank = index + 1;
+    zone.isCfpbDistressHotspot = hotspotSet.has(zone.zoneId);
+  });
+
+  const byState = new Map();
+  for (const zone of ranked) {
+    if (!byState.has(zone.state)) {
+      byState.set(zone.state, []);
+    }
+    byState.get(zone.state).push(zone);
+  }
+
+  for (const zonesInState of byState.values()) {
+    zonesInState.sort(
+      (a, b) =>
+        (b.cfpbDistressScore || 0) - (a.cfpbDistressScore || 0) ||
+        (b.cfpbDistressComplaintCount || 0) - (a.cfpbDistressComplaintCount || 0) ||
+        a.label.localeCompare(b.label)
+    );
+
+    const stateZoneCount = zonesInState.length;
+    zonesInState.forEach((zone, index) => {
+      zone.cfpbDistressStateRank = index + 1;
+      zone.cfpbDistressStateZoneCount = stateZoneCount;
+    });
+  }
+}
+
 function assignFallbackMortgageFields(zones) {
   for (const zone of zones) {
     Object.assign(zone, emptyMortgageMetrics());
+  }
+}
+
+function assignFallbackCfpbFields(zones) {
+  for (const zone of zones) {
+    Object.assign(zone, emptyCfpbDistressMetrics());
   }
 }
 
@@ -836,6 +1059,13 @@ async function main() {
     console.log(`Loaded HMDA county file ${HMDA_FILE_NAME} with ${hmda.countyMap.size} counties.`);
   } else {
     console.log(`HMDA county file ${HMDA_FILE_NAME} not found. Mortgage metrics will be unavailable.`);
+  }
+
+  const cfpbDistress = await loadCfpbDistressMap(outputDir);
+  if (cfpbDistress.hasData) {
+    console.log(`Loaded CFPB distress file ${CFPB_FILE_NAME} with ${cfpbDistress.zoneMap.size} ZIP3 zones.`);
+  } else {
+    console.log(`CFPB distress file ${CFPB_FILE_NAME} not found. Free distress signals will be unavailable.`);
   }
 
   const zones = [];
@@ -978,6 +1208,13 @@ async function main() {
     assignFallbackMortgageFields(zones);
   }
 
+  if (cfpbDistress.hasData) {
+    applyCfpbDistressMetrics(zones, cfpbDistress);
+    applyCfpbDistressRankings(zones);
+  } else {
+    assignFallbackCfpbFields(zones);
+  }
+
   const rankedZones = zones
     .slice()
     .sort((a, b) => b.population - a.population || a.label.localeCompare(b.label));
@@ -1080,6 +1317,23 @@ async function main() {
         delinquencyEstimatedStateRank: zone.delinquencyEstimatedStateRank,
         delinquencyStateZoneCount: zone.delinquencyStateZoneCount,
         isDelinquencyHotspot: zone.isDelinquencyHotspot,
+        hasCfpbDistressData: zone.hasCfpbDistressData,
+        cfpbDistressLookbackMonths: zone.cfpbDistressLookbackMonths,
+        cfpbDistressDateReceivedMin: zone.cfpbDistressDateReceivedMin,
+        cfpbDistressIssueList: zone.cfpbDistressIssueList,
+        cfpbDistressLastUpdated: zone.cfpbDistressLastUpdated,
+        cfpbDistressLatestComplaintDate: zone.cfpbDistressLatestComplaintDate,
+        cfpbDistressComplaintCount: zone.cfpbDistressComplaintCount,
+        cfpbDistressUntimelyCount: zone.cfpbDistressUntimelyCount,
+        cfpbDistressStrugglingCount: zone.cfpbDistressStrugglingCount,
+        cfpbDistressPaymentTroubleCount: zone.cfpbDistressPaymentTroubleCount,
+        cfpbDistressComplaintsPer100k: zone.cfpbDistressComplaintsPer100k,
+        cfpbDistressUntimelySharePct: zone.cfpbDistressUntimelySharePct,
+        cfpbDistressScore: zone.cfpbDistressScore,
+        cfpbDistressRank: zone.cfpbDistressRank,
+        cfpbDistressStateRank: zone.cfpbDistressStateRank,
+        cfpbDistressStateZoneCount: zone.cfpbDistressStateZoneCount,
+        isCfpbDistressHotspot: zone.isCfpbDistressHotspot,
         isMortgageHotspot: zone.isMortgageHotspot,
         isMortgageOpportunityHotspot: zone.isMortgageOpportunityHotspot,
         populationRank: zone.populationRank,
@@ -1136,6 +1390,23 @@ async function main() {
     delinquencyEstimatedStateRank: zone.delinquencyEstimatedStateRank,
     delinquencyStateZoneCount: zone.delinquencyStateZoneCount,
     isDelinquencyHotspot: zone.isDelinquencyHotspot,
+    hasCfpbDistressData: zone.hasCfpbDistressData,
+    cfpbDistressLookbackMonths: zone.cfpbDistressLookbackMonths,
+    cfpbDistressDateReceivedMin: zone.cfpbDistressDateReceivedMin,
+    cfpbDistressIssueList: zone.cfpbDistressIssueList,
+    cfpbDistressLastUpdated: zone.cfpbDistressLastUpdated,
+    cfpbDistressLatestComplaintDate: zone.cfpbDistressLatestComplaintDate,
+    cfpbDistressComplaintCount: zone.cfpbDistressComplaintCount,
+    cfpbDistressUntimelyCount: zone.cfpbDistressUntimelyCount,
+    cfpbDistressStrugglingCount: zone.cfpbDistressStrugglingCount,
+    cfpbDistressPaymentTroubleCount: zone.cfpbDistressPaymentTroubleCount,
+    cfpbDistressComplaintsPer100k: zone.cfpbDistressComplaintsPer100k,
+    cfpbDistressUntimelySharePct: zone.cfpbDistressUntimelySharePct,
+    cfpbDistressScore: zone.cfpbDistressScore,
+    cfpbDistressRank: zone.cfpbDistressRank,
+    cfpbDistressStateRank: zone.cfpbDistressStateRank,
+    cfpbDistressStateZoneCount: zone.cfpbDistressStateZoneCount,
+    isCfpbDistressHotspot: zone.isCfpbDistressHotspot,
     isMortgageHotspot: zone.isMortgageHotspot,
     isMortgageOpportunityHotspot: zone.isMortgageOpportunityHotspot,
     populationRank: zone.populationRank,
@@ -1155,9 +1426,15 @@ async function main() {
     const mortgageOriginationsAmount = stateZones.reduce((sum, zone) => sum + zone.mortgageOriginationsAmount, 0);
     const estimatedDelinquentLoans = stateZones.reduce((sum, zone) => sum + zone.estimatedDelinquentLoans, 0);
     const estimatedDelinquentVolume = stateZones.reduce((sum, zone) => sum + zone.estimatedDelinquentVolume, 0);
+    const cfpbDistressComplaintCount = stateZones.reduce((sum, zone) => sum + (zone.cfpbDistressComplaintCount || 0), 0);
+    const cfpbDistressUntimelyCount = stateZones.reduce((sum, zone) => sum + (zone.cfpbDistressUntimelyCount || 0), 0);
     const delinquencyRiskScoreAvg =
       stateZones.length > 0
         ? stateZones.reduce((sum, zone) => sum + (zone.delinquencyRiskScore || 0), 0) / stateZones.length
+        : 0;
+    const cfpbDistressScoreAvg =
+      stateZones.length > 0
+        ? stateZones.reduce((sum, zone) => sum + (zone.cfpbDistressScore || 0), 0) / stateZones.length
         : 0;
 
     return {
@@ -1172,7 +1449,10 @@ async function main() {
       mortgageOriginationsAmount: hmda.hasMortgageData ? mortgageOriginationsAmount : null,
       estimatedDelinquentLoans: hmda.hasMortgageData ? estimatedDelinquentLoans : null,
       estimatedDelinquentVolume: hmda.hasMortgageData ? estimatedDelinquentVolume : null,
-      delinquencyRiskScoreAvg: hmda.hasMortgageData ? Number(delinquencyRiskScoreAvg.toFixed(2)) : null
+      delinquencyRiskScoreAvg: hmda.hasMortgageData ? Number(delinquencyRiskScoreAvg.toFixed(2)) : null,
+      cfpbDistressComplaintCount: cfpbDistress.hasData ? cfpbDistressComplaintCount : null,
+      cfpbDistressUntimelyCount: cfpbDistress.hasData ? cfpbDistressUntimelyCount : null,
+      cfpbDistressScoreAvg: cfpbDistress.hasData ? Number(cfpbDistressScoreAvg.toFixed(2)) : null
     };
   });
 
@@ -1204,6 +1484,8 @@ async function main() {
   const totalMortgageAmount = zonesForJson.reduce((sum, zone) => sum + zone.mortgageOriginationsAmount, 0);
   const totalEstimatedDelinquentLoans = zonesForJson.reduce((sum, zone) => sum + zone.estimatedDelinquentLoans, 0);
   const totalEstimatedDelinquentVolume = zonesForJson.reduce((sum, zone) => sum + zone.estimatedDelinquentVolume, 0);
+  const totalCfpbDistressComplaints = zonesForJson.reduce((sum, zone) => sum + (zone.cfpbDistressComplaintCount || 0), 0);
+  const totalCfpbDistressUntimely = zonesForJson.reduce((sum, zone) => sum + (zone.cfpbDistressUntimelyCount || 0), 0);
 
   console.log(`Generated ${zoneGeojson.features.length} ZIP3 zone features`);
   console.log(`Generated ${zonesForJson.length} ZIP3 zone summaries`);
@@ -1221,6 +1503,16 @@ async function main() {
     );
     console.log(`Estimated delinquent loans proxy: ${totalEstimatedDelinquentLoans.toLocaleString("en-US")}`);
     console.log(`Estimated delinquent volume proxy: $${Math.round(totalEstimatedDelinquentVolume).toLocaleString("en-US")}`);
+  }
+
+  if (cfpbDistress.hasData) {
+    console.log(`CFPB distress issues: ${cfpbDistress.issueList.join(" | ")}`);
+    console.log(`CFPB distress range start: ${cfpbDistress.dateReceivedMin || "N/D"}`);
+    if (cfpbDistress.lastUpdated) {
+      console.log(`CFPB API last updated: ${cfpbDistress.lastUpdated}`);
+    }
+    console.log(`CFPB complaints (ZIP3 allocation): ${totalCfpbDistressComplaints.toLocaleString("en-US")}`);
+    console.log(`CFPB untimely complaints: ${totalCfpbDistressUntimely.toLocaleString("en-US")}`);
   }
 }
 

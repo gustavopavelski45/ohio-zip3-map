@@ -11,6 +11,7 @@ Mapa interativo dos Estados Unidos por `ZIP3`, com:
 - ZIP com mais casas estimadas dentro da zona;
 - modo `Mortgage Opportunity` com rank de volume de hipoteca e score de oportunidade;
 - modo `Delinquency Proxy` com estimativa de inadimplencia e rank de risco;
+- modo `Atraso (CFPB gratis)` com reclamacoes reais de dificuldade de pagamento/servicing e rank por zona;
 - cidades exibidas no mapa e busca por estado/ZIP3/cidade.
 
 ## Requisitos
@@ -51,6 +52,7 @@ Para desativar autenticacao (opcional):
 ## Scripts
 
 - `npm run prepare-mortgage-data`: gera `public/data/hmda_county_2024.json` a partir do snapshot HMDA oficial (FFIEC/CFPB)
+- `npm run prepare-cfpb-data`: gera `public/data/cfpb_mortgage_distress_12m.json` (API publica CFPB)
 - `npm run prepare-data`: baixa os limites ZIP5 por estado, agrega em zonas `STATE-ZIP3` e gera:
   - `public/data/coverage_zip3.geojson`
   - `public/data/coverage_zip3_zones.json`
@@ -63,10 +65,17 @@ Para usar o modo de mortgage com dados reais:
 
 ```bash
 npm run prepare-mortgage-data
+npm run prepare-cfpb-data
 npm run prepare-data
 ```
 
 Opcional: para recalibrar o proxy de inadimplencia sem alterar codigo, defina `DELINQUENCY_BASE_RATE` (ex.: `0.0335` para 3.35%) antes de rodar `prepare-data`.
+
+Opcional: ajuste a janela do CFPB gratuito com:
+
+- `CFPB_LOOKBACK_MONTHS` (padrao: `12`)
+- `CFPB_DATE_RECEIVED_MIN` (sobrescreve data minima)
+- `CFPB_ISSUES` (padrao: `Struggling to pay mortgage`; separado por `|`)
 
 ## Definir zonas de trabalho
 
@@ -94,3 +103,5 @@ Edite `public/data/work_zones.json`.
 
 - Limites ZIP/ZCTA: `OpenDataDE/State-zip-code-GeoJSON`
 - Cidade/lat/lon/populacao por ZIP: pacote npm `zipcode-detail-lookup`
+- Mortgage originations: HMDA snapshot publico (`FFIEC/CFPB`)
+- Atraso (gratis): `CFPB Consumer Complaint Database API` (produto Mortgage)

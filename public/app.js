@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v3";
+const DATA_VERSION = "all-us-v4";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -21,6 +21,7 @@ const state = {
   selectedZoneId: null,
   mode: "population",
   hasMortgageData: false,
+  hasCfpbDistressData: false,
   mortgageYear: null,
   zones: [],
   cities: [],
@@ -158,9 +159,17 @@ function isDelinquencyMode() {
   return state.mode === "delinquency" && state.hasMortgageData;
 }
 
+function isCfpbDelinquencyMode() {
+  return state.mode === "cfpb-delinquency" && state.hasCfpbDistressData;
+}
+
 function isZoneHotspot(zone) {
   if (!zone) {
     return false;
+  }
+
+  if (isCfpbDelinquencyMode()) {
+    return Boolean(zone.isCfpbDistressHotspot);
   }
 
   if (isDelinquencyMode()) {
@@ -276,6 +285,25 @@ function delinquencySummaryBlock(zone) {
   `;
 }
 
+function cfpbDelinquencySummaryBlock(zone) {
+  if (!zone.hasCfpbDistressData) {
+    return "Sinal gratis CFPB indisponivel";
+  }
+
+  const stateRank = formatRank(zone.cfpbDistressStateRank, zone.cfpbDistressStateZoneCount);
+  const rangeLabel = zone.cfpbDistressLookbackMonths
+    ? `${formatNumber(zone.cfpbDistressLookbackMonths)}m`
+    : "janela ativa";
+  const latestLabel = zone.cfpbDistressLatestComplaintDate || zone.cfpbDistressLastUpdated || "N/D";
+
+  return `
+    CFPB atraso (${escapeHtml(rangeLabel)}): <strong>${formatNumber(zone.cfpbDistressComplaintCount)}</strong> complaints<br/>
+    Nao pontuais: <strong>${formatNumber(zone.cfpbDistressUntimelyCount)}</strong> (${escapeHtml(formatPercent(zone.cfpbDistressUntimelySharePct))}) • ${escapeHtml(formatNumber(zone.cfpbDistressComplaintsPer100k))}/100k hab<br/>
+    Score atraso: <strong>${escapeHtml(formatScore(zone.cfpbDistressScore))}</strong> • rank #${formatNumber(zone.cfpbDistressRank)} (geral) • ${escapeHtml(stateRank)} (estado)<br/>
+    Ultimo registro: ${escapeHtml(latestLabel)}
+  `;
+}
+
 function formatPopup(feature) {
   const zone = state.zoneById.get(feature.properties.zoneId);
   if (!zone) {
@@ -298,6 +326,7 @@ function formatPopup(feature) {
     ZIP com mais casas: <strong>${escapeHtml(topHousingLabel)}</strong><br/>
     ${mortgageSummaryBlock(zone)}<br/>
     ${delinquencySummaryBlock(zone)}<br/>
+    ${cfpbDelinquencySummaryBlock(zone)}<br/>
     Hotspot ativo no modo atual: ${hotspotLabel}<br/>
     <small>${escapeHtml(cityPreview(zone.cities, 7))}</small>
   `;
@@ -333,6 +362,14 @@ function refreshModeText() {
     return;
   }
 
+  if (isCfpbDelinquencyMode()) {
+    modeHintEl.textContent = "Modo Atraso (CFPB gratis): sinal por reclamacoes de dificuldade de pagamento e problemas no processamento.";
+    if (legendHotspotLabelEl) {
+      legendHotspotLabelEl.textContent = "Hotspot de atraso (CFPB)";
+    }
+    return;
+  }
+
   if (isDelinquencyMode()) {
     modeHintEl.textContent = "Modo Delinquency Proxy: estimativa de inadimplencia por volume, composicao e intensidade local.";
     if (legendHotspotLabelEl) {
@@ -351,6 +388,8 @@ function refreshModeText() {
 
   if (state.mode === "mortgage" && !state.hasMortgageData) {
     modeHintEl.textContent = "Dados de mortgage ainda nao disponiveis. Rode: npm run prepare-mortgage-data && npm run prepare-data";
+  } else if (state.mode === "cfpb-delinquency" && !state.hasCfpbDistressData) {
+    modeHintEl.textContent = "Sinal CFPB ainda nao disponivel. Rode: npm run prepare-cfpb-data && npm run prepare-data";
   } else {
     modeHintEl.textContent = "Modo Populacao: destaque automatico para zonas mais populosas.";
   }
@@ -365,6 +404,36 @@ function refreshStats() {
   const activeZoneCount = activeZones.length;
   const activeStates = new Set(activeZones.map((zone) => zone.state));
   const hotspotCount = activeZones.filter((zone) => isZoneHotspot(zone)).length;
+
+  if (isCfpbDelinquencyMode()) {
+    const totalComplaints = activeZones.reduce(
+      (sum, zone) => sum + (zone.cfpbDistressComplaintCount || 0),
+      0
+    );
+    const totalUntimely = activeZones.reduce(
+      (sum, zone) => sum + (zone.cfpbDistressUntimelyCount || 0),
+      0
+    );
+
+    if (!state.selectedZoneId) {
+      statsEl.innerHTML = `${activeZoneCount} zonas ZIP3 ativas em ${activeStates.size} estados<br/>` +
+        `${formatNumber(totalComplaints)} complaints CFPB • ${formatNumber(totalUntimely)} nao pontuais • ${hotspotCount} hotspots`;
+      return;
+    }
+
+    const zone = state.zoneById.get(state.selectedZoneId);
+    if (!zone) {
+      statsEl.innerHTML = `${activeZoneCount} zonas ZIP3 ativas em ${activeStates.size} estados<br/>` +
+        `${formatNumber(totalComplaints)} complaints CFPB • ${formatNumber(totalUntimely)} nao pontuais • ${hotspotCount} hotspots`;
+      return;
+    }
+
+    const stateRank = formatRank(zone.cfpbDistressStateRank, zone.cfpbDistressStateZoneCount);
+    statsEl.innerHTML = `<strong>${escapeHtml(zone.label)}</strong> • ${escapeHtml(zone.stateName)}<br/>` +
+      `${formatNumber(zone.cfpbDistressComplaintCount)} complaints • ${formatNumber(zone.cfpbDistressUntimelyCount)} nao pontuais • ${escapeHtml(formatNumber(zone.cfpbDistressComplaintsPer100k))}/100k hab<br/>` +
+      `score atraso ${escapeHtml(formatScore(zone.cfpbDistressScore))} • rank #${formatNumber(zone.cfpbDistressRank)} • rank estado ${escapeHtml(stateRank)}`;
+    return;
+  }
 
   if (isDelinquencyMode()) {
     const totalEstimatedDelinquentLoans = activeZones.reduce(
@@ -505,6 +574,14 @@ function zoneMatchesFilter(zone, query) {
 }
 
 function compareZoneByMode(a, b) {
+  if (isCfpbDelinquencyMode()) {
+    return (
+      (b.cfpbDistressScore || 0) - (a.cfpbDistressScore || 0) ||
+      (b.cfpbDistressComplaintCount || 0) - (a.cfpbDistressComplaintCount || 0) ||
+      a.label.localeCompare(b.label)
+    );
+  }
+
   if (isDelinquencyMode()) {
     return (
       (b.estimatedDelinquentLoans || 0) - (a.estimatedDelinquentLoans || 0) ||
@@ -553,7 +630,18 @@ function renderZoneList() {
 
     const hotspotTag = isZoneHotspot(zone) ? `<span class="zone-tag">HOT</span>` : "";
 
-    if (isDelinquencyMode()) {
+    if (isCfpbDelinquencyMode()) {
+      button.innerHTML = `
+        <div class="zone-title">
+          <span>${escapeHtml(zone.label)}</span>
+          <span>${formatNumber(zone.cfpbDistressComplaintCount)} complaints</span>
+        </div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.cfpbDistressScore))} • rank #${formatNumber(zone.cfpbDistressRank)} ${hotspotTag}</div>
+        <div class="zone-cities">Nao pontuais: ${formatNumber(zone.cfpbDistressUntimelyCount)} (${escapeHtml(formatPercent(zone.cfpbDistressUntimelySharePct))}) • ${escapeHtml(formatNumber(zone.cfpbDistressComplaintsPer100k))}/100k hab</div>
+        <div class="zone-cities">Rank estado: ${formatRank(zone.cfpbDistressStateRank, zone.cfpbDistressStateZoneCount)} • inicio ${escapeHtml(zone.cfpbDistressDateReceivedMin || "N/D")}</div>
+        <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
+      `;
+    } else if (isDelinquencyMode()) {
       button.innerHTML = `
         <div class="zone-title">
           <span>${escapeHtml(zone.label)}</span>
@@ -723,13 +811,18 @@ function setupControls() {
 
   modeSelect.addEventListener("change", (event) => {
     const nextMode = String(event.target.value || "population");
-    if (nextMode === "mortgage" || nextMode === "delinquency") {
+    if (nextMode === "mortgage" || nextMode === "delinquency" || nextMode === "cfpb-delinquency") {
       state.mode = nextMode;
     } else {
       state.mode = "population";
     }
 
-    if (!state.hasMortgageData && state.mode !== "population") {
+    if (!state.hasMortgageData && (state.mode === "mortgage" || state.mode === "delinquency")) {
+      state.mode = "population";
+      modeSelect.value = "population";
+    }
+
+    if (!state.hasCfpbDistressData && state.mode === "cfpb-delinquency") {
       state.mode = "population";
       modeSelect.value = "population";
     }
@@ -787,10 +880,12 @@ async function loadData() {
 
   if (state.zones.length > 0) {
     state.hasMortgageData = Boolean(state.zones[0].hasMortgageData);
+    state.hasCfpbDistressData = Boolean(state.zones[0].hasCfpbDistressData);
     state.mortgageYear = state.zones[0].mortgageYear || null;
   }
 
-  if (!state.hasMortgageData) {
+  if ((!state.hasMortgageData && (state.mode === "mortgage" || state.mode === "delinquency")) ||
+      (!state.hasCfpbDistressData && state.mode === "cfpb-delinquency")) {
     modeSelect.value = "population";
     state.mode = "population";
   }
