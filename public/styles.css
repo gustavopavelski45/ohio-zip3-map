@@ -77,6 +77,21 @@ h1 {
   font-size: 14px;
 }
 
+.controls select {
+  border: 1px solid rgba(29, 78, 216, 0.25);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.98);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.mode-help {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .switches {
   display: grid;
   gap: 7px;

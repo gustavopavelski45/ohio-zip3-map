@@ -8,6 +8,8 @@ Mapa interativo dos Estados Unidos por `ZIP3`, com:
 - destaque automatico para zonas mais populosas;
 - rank populacional geral e rank dentro do estado;
 - ZIP5 lider (maior populacao) dentro de cada zona;
+- ZIP com mais casas estimadas dentro da zona;
+- modo `Mortgage Opportunity` com rank de volume de hipoteca e score de oportunidade;
 - cidades exibidas no mapa e busca por estado/ZIP3/cidade.
 
 ## Requisitos
@@ -47,6 +49,7 @@ Para desativar autenticacao (opcional):
 
 ## Scripts
 
+- `npm run prepare-mortgage-data`: gera `public/data/hmda_county_2024.json` a partir do snapshot HMDA oficial (FFIEC/CFPB)
 - `npm run prepare-data`: baixa os limites ZIP5 por estado, agrega em zonas `STATE-ZIP3` e gera:
   - `public/data/coverage_zip3.geojson`
   - `public/data/coverage_zip3_zones.json`
@@ -54,6 +57,13 @@ Para desativar autenticacao (opcional):
   - `public/data/coverage_states.json`
 - `npm run start`: sobe servidor na porta `8787`
 - `npm run dev`: gera dados e sobe servidor
+
+Para usar o modo de mortgage com dados reais:
+
+```bash
+npm run prepare-mortgage-data
+npm run prepare-data
+```
 
 ## Definir zonas de trabalho
 

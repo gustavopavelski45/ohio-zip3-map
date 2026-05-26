@@ -32,6 +32,15 @@
           <input id="zip3-filter" type="text" placeholder="Ex: NY-100, PA, Charlotte" />
         </div>
 
+        <div class="controls">
+          <label for="analysis-mode">Modo de analise</label>
+          <select id="analysis-mode">
+            <option value="population">Populacao</option>
+            <option value="mortgage">Mortgage Opportunity</option>
+          </select>
+          <small id="analysis-mode-hint" class="mode-help"></small>
+        </div>
+
         <div class="switches">
           <label>
             <input id="toggle-cities" type="checkbox" checked />
@@ -43,7 +52,7 @@
           </label>
           <label>
             <input id="toggle-hotspots" type="checkbox" checked />
-            Destacar zonas mais populosas
+            Destacar hotspots do modo atual
           </label>
         </div>
 
@@ -57,7 +66,7 @@
           <span class="swatch"></span>
           Zona ativa (transparente)
           <span class="swatch hotspot"></span>
-          Hotspot populacional
+          <span id="legend-hotspot-label">Hotspot populacional</span>
         </div>
       </main>
     </div>
@@ -67,6 +76,6 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script type="module" src="./app.js?v=all-us-v1"></script>
+    <script type="module" src="./app.js?v=all-us-v2"></script>
   </body>
 </html>

@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v1";
+const DATA_VERSION = "all-us-v2";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -19,11 +19,13 @@ const cityLayerGroup = L.layerGroup().addTo(map);
 
 const state = {
   selectedZoneId: null,
+  mode: "population",
+  hasMortgageData: false,
+  mortgageYear: null,
   zones: [],
   cities: [],
   states: [],
   activeZoneIds: new Set(),
-  hotspotZoneIds: new Set(),
   zoneById: new Map(),
   boundsByZoneId: new Map(),
   zoneLayer: null,
@@ -35,11 +37,14 @@ const state = {
 };
 
 const filterInput = document.querySelector("#zip3-filter");
+const modeSelect = document.querySelector("#analysis-mode");
+const modeHintEl = document.querySelector("#analysis-mode-hint");
 const toggleCitiesInput = document.querySelector("#toggle-cities");
 const toggleZip3LabelsInput = document.querySelector("#toggle-zip3-labels");
 const toggleHotspotsInput = document.querySelector("#toggle-hotspots");
 const zoneListEl = document.querySelector("#zone-list");
 const statsEl = document.querySelector("#stats");
+const legendHotspotLabelEl = document.querySelector("#legend-hotspot-label");
 
 function escapeHtml(text) {
   return String(text)
@@ -59,6 +64,19 @@ function formatNumber(value) {
   return new Intl.NumberFormat("en-US").format(Math.round(numericValue));
 }
 
+function formatCurrency(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return "N/D";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0
+  }).format(Math.round(numericValue));
+}
+
 function formatRank(rankValue, totalValue) {
   const rank = Number(rankValue);
   const total = Number(totalValue);
@@ -69,6 +87,15 @@ function formatRank(rankValue, totalValue) {
   return `#${rank}/${total}`;
 }
 
+function formatScore(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return "N/D";
+  }
+
+  return `${numericValue.toFixed(1)}/100`;
+}
+
 function topZipSummary(zone) {
   if (!zone || !zone.topZip5 || !Number.isFinite(Number(zone.topZipPopulation)) || zone.topZipPopulation <= 0) {
     return "N/D";
@@ -76,6 +103,20 @@ function topZipSummary(zone) {
 
   const cityPart = zone.topZipCity ? ` • ${zone.topZipCity}` : "";
   return `${zone.topZip5}${cityPart} • ${formatNumber(zone.topZipPopulation)} hab`;
+}
+
+function topHousingSummary(zone) {
+  if (
+    !zone ||
+    !zone.topHousingZip5 ||
+    !Number.isFinite(Number(zone.topHousingUnitsEstimate)) ||
+    zone.topHousingUnitsEstimate <= 0
+  ) {
+    return "N/D";
+  }
+
+  const cityPart = zone.topHousingCity ? ` • ${zone.topHousingCity}` : "";
+  return `${zone.topHousingZip5}${cityPart} • ${formatNumber(zone.topHousingUnitsEstimate)} casas (estimado)`;
 }
 
 function normalizeZoneId(value) {
@@ -100,8 +141,20 @@ function isActiveZone(zoneId) {
   return state.activeZoneIds.has(zoneId);
 }
 
-function isHotspotZone(zoneId) {
-  return state.hotspotZoneIds.has(zoneId);
+function isMortgageMode() {
+  return state.mode === "mortgage" && state.hasMortgageData;
+}
+
+function isZoneHotspot(zone) {
+  if (!zone) {
+    return false;
+  }
+
+  if (isMortgageMode()) {
+    return Boolean(zone.isMortgageOpportunityHotspot);
+  }
+
+  return Boolean(zone.isPopulationHotspot);
 }
 
 function styleForFeature(feature) {
@@ -111,7 +164,7 @@ function styleForFeature(feature) {
   const hasSelection = Boolean(state.selectedZoneId);
   const isActive = isActiveZone(zoneId);
   const isMuted = hasSelection && !isSelected;
-  const isHotspot = state.highlightHotspots && isHotspotZone(zoneId);
+  const isHotspot = state.highlightHotspots && isZoneHotspot(zone);
 
   if (!zone || !isActive) {
     return {
@@ -178,25 +231,42 @@ function cityPreview(cities, limit = 5) {
   return `${cities.slice(0, limit).join(", ")} +${cities.length - limit}`;
 }
 
+function mortgageSummaryBlock(zone) {
+  if (!zone.hasMortgageData) {
+    return "Dados de mortgage indisponiveis";
+  }
+
+  const stateMortgageRank = formatRank(zone.mortgageStateRank, zone.mortgageStateZoneCount);
+  return `
+    Mortgage (${escapeHtml(zone.mortgageYear)}): <strong>${formatNumber(zone.mortgageOriginationsCount)}</strong> loans<br/>
+    Volume estimado: <strong>${escapeHtml(formatCurrency(zone.mortgageOriginationsAmount))}</strong><br/>
+    Rank mortgage: #${formatNumber(zone.mortgageVolumeRank)} (geral) • ${escapeHtml(stateMortgageRank)} (estado)<br/>
+    Score oportunidade: <strong>${escapeHtml(formatScore(zone.mortgageOpportunityScore))}</strong> • rank #${formatNumber(zone.mortgageOpportunityRank)}
+  `;
+}
+
 function formatPopup(feature) {
   const zone = state.zoneById.get(feature.properties.zoneId);
   if (!zone) {
-    return "Zona indisponível";
+    return "Zona indisponivel";
   }
 
-  const hotspotLabel = zone.isPopulationHotspot ? "Sim" : "Não";
+  const hotspotLabel = isZoneHotspot(zone) ? "Sim" : "Nao";
   const stateRankLabel = formatRank(zone.statePopulationRank, zone.stateZoneCount);
   const topZipLabel = topZipSummary(zone);
+  const topHousingLabel = topHousingSummary(zone);
 
   return `
     <strong>${escapeHtml(zone.label)}</strong><br/>
     Estado: <strong>${escapeHtml(zone.stateName)} (${escapeHtml(zone.state)})</strong><br/>
     ZIP5 na zona: ${formatNumber(zone.zipCount)}<br/>
-    População estimada: <strong>${formatNumber(zone.population)}</strong><br/>
-    Rank geral: #${formatNumber(zone.populationRank)}<br/>
-    Rank no estado: <strong>${escapeHtml(stateRankLabel)}</strong><br/>
-    ZIP líder da zona: <strong>${escapeHtml(topZipLabel)}</strong><br/>
-    Hotspot: ${hotspotLabel}<br/>
+    Populacao estimada: <strong>${formatNumber(zone.population)}</strong><br/>
+    Casas estimadas: <strong>${formatNumber(zone.housingUnitsEstimate)}</strong><br/>
+    Rank populacional: #${formatNumber(zone.populationRank)} • estado ${escapeHtml(stateRankLabel)}<br/>
+    ZIP lider (pop): <strong>${escapeHtml(topZipLabel)}</strong><br/>
+    ZIP com mais casas: <strong>${escapeHtml(topHousingLabel)}</strong><br/>
+    ${mortgageSummaryBlock(zone)}<br/>
+    Hotspot ativo no modo atual: ${hotspotLabel}<br/>
     <small>${escapeHtml(cityPreview(zone.cities, 7))}</small>
   `;
 }
@@ -226,11 +296,60 @@ function getActiveZones() {
   return state.zones.filter((zone) => isActiveZone(zone.zoneId));
 }
 
+function refreshModeText() {
+  if (!modeHintEl) {
+    return;
+  }
+
+  if (isMortgageMode()) {
+    modeHintEl.textContent = "Modo Mortgage: destaque por score de oportunidade e volume estimado de loans.";
+    if (legendHotspotLabelEl) {
+      legendHotspotLabelEl.textContent = "Hotspot de oportunidade mortgage";
+    }
+    return;
+  }
+
+  if (state.mode === "mortgage" && !state.hasMortgageData) {
+    modeHintEl.textContent = "Dados de mortgage ainda nao disponiveis. Rode: npm run prepare-mortgage-data && npm run prepare-data";
+  } else {
+    modeHintEl.textContent = "Modo Populacao: destaque automatico para zonas mais populosas.";
+  }
+
+  if (legendHotspotLabelEl) {
+    legendHotspotLabelEl.textContent = "Hotspot populacional";
+  }
+}
+
 function refreshStats() {
   const activeZones = getActiveZones();
   const activeZoneCount = activeZones.length;
   const activeStates = new Set(activeZones.map((zone) => zone.state));
-  const hotspotCount = activeZones.filter((zone) => zone.isPopulationHotspot).length;
+  const hotspotCount = activeZones.filter((zone) => isZoneHotspot(zone)).length;
+
+  if (isMortgageMode()) {
+    const totalMortgageCount = activeZones.reduce((sum, zone) => sum + (zone.mortgageOriginationsCount || 0), 0);
+    const totalMortgageAmount = activeZones.reduce((sum, zone) => sum + (zone.mortgageOriginationsAmount || 0), 0);
+
+    if (!state.selectedZoneId) {
+      statsEl.innerHTML = `${activeZoneCount} zonas ZIP3 ativas em ${activeStates.size} estados<br/>` +
+        `${formatNumber(totalMortgageCount)} loans originados (estimado) • ${escapeHtml(formatCurrency(totalMortgageAmount))} • ${hotspotCount} hotspots`;
+      return;
+    }
+
+    const zone = state.zoneById.get(state.selectedZoneId);
+    if (!zone) {
+      statsEl.innerHTML = `${activeZoneCount} zonas ZIP3 ativas em ${activeStates.size} estados<br/>` +
+        `${formatNumber(totalMortgageCount)} loans originados (estimado) • ${escapeHtml(formatCurrency(totalMortgageAmount))} • ${hotspotCount} hotspots`;
+      return;
+    }
+
+    const mortgageStateRank = formatRank(zone.mortgageStateRank, zone.mortgageStateZoneCount);
+    statsEl.innerHTML = `<strong>${escapeHtml(zone.label)}</strong> • ${escapeHtml(zone.stateName)}<br/>` +
+      `${formatNumber(zone.mortgageOriginationsCount)} loans • ${escapeHtml(formatCurrency(zone.mortgageOriginationsAmount))} • score ${escapeHtml(formatScore(zone.mortgageOpportunityScore))}<br/>` +
+      `rank mortgage #${formatNumber(zone.mortgageVolumeRank)} • rank estado ${escapeHtml(mortgageStateRank)} • rank oportunidade #${formatNumber(zone.mortgageOpportunityRank)}`;
+    return;
+  }
+
   const totalPopulation = activeZones.reduce((sum, zone) => sum + zone.population, 0);
 
   if (!state.selectedZoneId) {
@@ -248,7 +367,7 @@ function refreshStats() {
 
   statsEl.innerHTML = `<strong>${escapeHtml(zone.label)}</strong> • ${escapeHtml(zone.stateName)}<br/>` +
     `${formatNumber(zone.population)} habitantes • ${formatNumber(zone.zipCount)} ZIP5 • rank geral #${zone.populationRank} • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)}<br/>` +
-    `ZIP líder: ${escapeHtml(topZipSummary(zone))}`;
+    `ZIP lider: ${escapeHtml(topZipSummary(zone))}`;
 }
 
 function updateSelection(zoneId) {
@@ -277,7 +396,7 @@ function buildZoneLayer(geojson) {
     style: styleForFeature,
     onEachFeature(feature, layer) {
       const zoneId = feature.properties.zoneId;
-      layer.bindPopup(formatPopup(feature));
+      layer.bindPopup(() => formatPopup(feature));
 
       layer.on("click", () => {
         updateSelection(zoneId);
@@ -315,6 +434,18 @@ function zoneMatchesFilter(zone, query) {
   return zone.cities.some((city) => city.toLowerCase().includes(query));
 }
 
+function compareZoneByMode(a, b) {
+  if (isMortgageMode()) {
+    return (
+      (b.mortgageOpportunityScore || 0) - (a.mortgageOpportunityScore || 0) ||
+      (b.mortgageOriginationsCount || 0) - (a.mortgageOriginationsCount || 0) ||
+      a.label.localeCompare(b.label)
+    );
+  }
+
+  return b.population - a.population || a.label.localeCompare(b.label);
+}
+
 function renderZoneList() {
   zoneListEl.innerHTML = "";
 
@@ -322,7 +453,7 @@ function renderZoneList() {
   const visibleZones = state.zones
     .filter((zone) => isActiveZone(zone.zoneId))
     .filter((zone) => zoneMatchesFilter(zone, query))
-    .sort((a, b) => b.population - a.population || a.label.localeCompare(b.label));
+    .sort(compareZoneByMode);
 
   if (visibleZones.length === 0) {
     zoneListEl.innerHTML = `<div class="zone-item">Nenhuma zona encontrada para "${escapeHtml(query)}".</div>`;
@@ -337,22 +468,35 @@ function renderZoneList() {
     if (state.selectedZoneId === zone.zoneId) {
       classes.push("active");
     }
-    if (zone.isPopulationHotspot) {
+    if (isZoneHotspot(zone)) {
       classes.push("hotspot");
     }
     button.className = classes.join(" ");
 
-    const hotspotTag = zone.isPopulationHotspot ? `<span class="zone-tag">HOT</span>` : "";
+    const hotspotTag = isZoneHotspot(zone) ? `<span class="zone-tag">HOT</span>` : "";
 
-    button.innerHTML = `
-      <div class="zone-title">
-        <span>${escapeHtml(zone.label)}</span>
-        <span>${formatNumber(zone.population)}</span>
-      </div>
-      <div class="zone-meta">${escapeHtml(zone.stateName)} • ${zone.zipCount} ZIP5 • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)} • rank geral #${zone.populationRank} ${hotspotTag}</div>
-      <div class="zone-cities">ZIP líder: ${escapeHtml(topZipSummary(zone))}</div>
-      <div class="zone-cities">${escapeHtml(cityPreview(zone.cities, 7))}</div>
-    `;
+    if (isMortgageMode()) {
+      button.innerHTML = `
+        <div class="zone-title">
+          <span>${escapeHtml(zone.label)}</span>
+          <span>${formatNumber(zone.mortgageOriginationsCount)} loans</span>
+        </div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.mortgageOpportunityScore))} • rank oportunidade #${formatNumber(zone.mortgageOpportunityRank)} ${hotspotTag}</div>
+        <div class="zone-cities">Volume estimado: ${escapeHtml(formatCurrency(zone.mortgageOriginationsAmount))} • rank estado ${formatRank(zone.mortgageStateRank, zone.mortgageStateZoneCount)}</div>
+        <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
+      `;
+    } else {
+      button.innerHTML = `
+        <div class="zone-title">
+          <span>${escapeHtml(zone.label)}</span>
+          <span>${formatNumber(zone.population)}</span>
+        </div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • ${zone.zipCount} ZIP5 • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)} • rank geral #${zone.populationRank} ${hotspotTag}</div>
+        <div class="zone-cities">ZIP lider: ${escapeHtml(topZipSummary(zone))}</div>
+        <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
+        <div class="zone-cities">${escapeHtml(cityPreview(zone.cities, 7))}</div>
+      `;
+    }
 
     button.addEventListener("click", () => {
       updateSelection(zone.zoneId);
@@ -478,7 +622,7 @@ async function loadWorkZones() {
     if (parsed.size > 0) {
       state.activeZoneIds = parsed;
     }
-  } catch (error) {
+  } catch {
     console.warn("work_zones.json not found; using all zones.");
   }
 }
@@ -487,6 +631,14 @@ function setupControls() {
   filterInput.addEventListener("input", (event) => {
     state.filter = event.target.value;
     renderZoneList();
+  });
+
+  modeSelect.addEventListener("change", (event) => {
+    state.mode = event.target.value === "mortgage" ? "mortgage" : "population";
+    refreshModeText();
+    refreshStyles();
+    renderZoneList();
+    refreshStats();
   });
 
   toggleCitiesInput.addEventListener("change", (event) => {
@@ -516,7 +668,7 @@ async function loadData() {
   ]);
 
   if (!geoResp.ok || !zonesResp.ok || !citiesResp.ok || !statesResp.ok) {
-    throw new Error("Não foi possível carregar os arquivos de dados. Rode 'npm run prepare-data'.");
+    throw new Error("Nao foi possivel carregar os arquivos de dados. Rode 'npm run prepare-data'.");
   }
 
   const zoneGeojson = await geoResp.json();
@@ -526,19 +678,26 @@ async function loadData() {
   state.totalZoneFeatureCount = zoneGeojson.features.length;
 
   state.zoneById = new Map();
-  state.hotspotZoneIds = new Set();
 
   for (const zone of state.zones) {
     state.zoneById.set(zone.zoneId, zone);
-    if (zone.isPopulationHotspot) {
-      state.hotspotZoneIds.add(zone.zoneId);
-    }
   }
 
   state.activeZoneIds = new Set(state.zones.map((zone) => zone.zoneId));
   await loadWorkZones();
 
+  if (state.zones.length > 0) {
+    state.hasMortgageData = Boolean(state.zones[0].hasMortgageData);
+    state.mortgageYear = state.zones[0].mortgageYear || null;
+  }
+
+  if (!state.hasMortgageData) {
+    modeSelect.value = "population";
+    state.mode = "population";
+  }
+
   buildZoneLayer(zoneGeojson);
+  refreshModeText();
   renderZoneList();
   refreshStats();
   renderZip3Labels();
@@ -549,5 +708,5 @@ setupControls();
 
 loadData().catch((error) => {
   console.error(error);
-  statsEl.textContent = "Erro ao carregar dados. Rode 'npm run prepare-data' e recarregue a página.";
+  statsEl.textContent = "Erro ao carregar dados. Rode 'npm run prepare-data' e recarregue a pagina.";
 });
