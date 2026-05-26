@@ -7,6 +7,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 const port = Number.parseInt(process.env.PORT || "8787", 10);
+const authDisabled = String(process.env.AUTH_DISABLED || "").toLowerCase() === "true";
+const authUser = process.env.APP_USER || "pavelski";
+const authPassword = process.env.APP_PASSWORD || "zope2026";
+const authRealm = process.env.AUTH_REALM || "Pavelski Zope Map";
 
 const mimeByExt = {
   ".html": "text/html; charset=utf-8",
@@ -22,8 +26,12 @@ const mimeByExt = {
   ".txt": "text/plain; charset=utf-8"
 };
 
+function getPathname(urlValue) {
+  return decodeURIComponent(String(urlValue || "/").split("?")[0]);
+}
+
 function resolvePath(urlPathname) {
-  const pathname = decodeURIComponent(urlPathname.split("?")[0]);
+  const pathname = getPathname(urlPathname);
   const cleaned = pathname === "/" ? "/index.html" : pathname;
   const fullPath = path.normalize(path.join(publicDir, cleaned));
 
@@ -43,11 +51,73 @@ async function fileExists(targetPath) {
   }
 }
 
+function parseBasicAuthHeader(headerValue) {
+  if (!headerValue || typeof headerValue !== "string") {
+    return null;
+  }
+
+  const [scheme, encoded] = headerValue.split(" ");
+  if (scheme !== "Basic" || !encoded) {
+    return null;
+  }
+
+  let decoded;
+  try {
+    decoded = Buffer.from(encoded, "base64").toString("utf-8");
+  } catch {
+    return null;
+  }
+
+  const separator = decoded.indexOf(":");
+  if (separator < 0) {
+    return null;
+  }
+
+  return {
+    user: decoded.slice(0, separator),
+    password: decoded.slice(separator + 1)
+  };
+}
+
+function isAuthorized(req) {
+  if (authDisabled) {
+    return true;
+  }
+
+  const parsed = parseBasicAuthHeader(req.headers.authorization);
+  if (!parsed) {
+    return false;
+  }
+
+  return parsed.user === authUser && parsed.password === authPassword;
+}
+
+function sendUnauthorized(res) {
+  res.writeHead(401, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "WWW-Authenticate": `Basic realm="${authRealm}", charset="UTF-8"`
+  });
+  res.end("Authentication required.");
+}
+
 const server = http.createServer(async (req, res) => {
   const method = req.method || "GET";
   if (method !== "GET" && method !== "HEAD") {
     res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Method Not Allowed");
+    return;
+  }
+
+  const pathname = getPathname(req.url || "/");
+
+  if (pathname === "/healthz") {
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("ok");
+    return;
+  }
+
+  if (!isAuthorized(req)) {
+    sendUnauthorized(res);
     return;
   }
 
@@ -85,5 +155,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`ZIP3 map server listening on port ${port}`);
+  const authStatus = authDisabled ? "disabled" : `enabled (user: ${authUser})`;
+  console.log(`Pavelski Zope Map server listening on port ${port}; auth ${authStatus}`);
 });

@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "contour-v6";
+const DATA_VERSION = "all-us-v1";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 

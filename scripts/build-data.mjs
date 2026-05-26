@@ -14,25 +14,70 @@ const SIMPLIFY_TOLERANCE = 0.0012;
 
 const SOURCE_BASE_URL =
   "https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master";
+const SOURCE_INDEX_URL =
+  "https://api.github.com/repos/OpenDataDE/State-zip-code-GeoJSON/contents";
 
-const TARGET_STATES = [
-  { state: "OH", stateName: "Ohio", file: "oh_ohio_zip_codes_geo.min.json" },
-  { state: "PA", stateName: "Pennsylvania", file: "pa_pennsylvania_zip_codes_geo.min.json" },
-  { state: "MI", stateName: "Michigan", file: "mi_michigan_zip_codes_geo.min.json" },
-  { state: "NJ", stateName: "New Jersey", file: "nj_new_jersey_zip_codes_geo.min.json" },
-  { state: "NY", stateName: "New York", file: "ny_new_york_zip_codes_geo.min.json" },
-  { state: "NH", stateName: "New Hampshire", file: "nh_new_hampshire_zip_codes_geo.min.json" },
-  { state: "NC", stateName: "North Carolina", file: "nc_north_carolina_zip_codes_geo.min.json" },
-  { state: "SC", stateName: "South Carolina", file: "sc_south_carolina_zip_codes_geo.min.json" },
-  { state: "CT", stateName: "Connecticut", file: "ct_connecticut_zip_codes_geo.min.json" },
-  { state: "GA", stateName: "Georgia", file: "ga_georgia_zip_codes_geo.min.json" },
-  { state: "DE", stateName: "Delaware", file: "de_delaware_zip_codes_geo.min.json" },
-  { state: "MD", stateName: "Maryland", file: "md_maryland_zip_codes_geo.min.json" },
-  { state: "CA", stateName: "California", file: "ca_california_zip_codes_geo.min.json" },
-  { state: "FL", stateName: "Florida", file: "fl_florida_zip_codes_geo.min.json" },
-  { state: "VA", stateName: "Virginia", file: "va_virginia_zip_codes_geo.min.json" },
-  { state: "KY", stateName: "Kentucky", file: "ky_kentucky_zip_codes_geo.min.json" }
-];
+const SOURCE_EXCLUDED_CODES = new Set(["DC"]);
+
+function titleCaseWord(word) {
+  if (word === "of") {
+    return "of";
+  }
+
+  if (word.length === 0) {
+    return word;
+  }
+
+  return `${word[0].toUpperCase()}${word.slice(1)}`;
+}
+
+function parseStateSourceFile(fileName) {
+  const match = /^([a-z]{2})_(.+)_zip_codes_geo\.min\.json$/.exec(fileName);
+  if (!match) {
+    return null;
+  }
+
+  const state = match[1].toUpperCase();
+  if (SOURCE_EXCLUDED_CODES.has(state)) {
+    return null;
+  }
+
+  const slug = match[2];
+  const stateName = slug
+    .split("_")
+    .map((entry) => titleCaseWord(entry))
+    .join(" ");
+
+  return { state, stateName, file: fileName };
+}
+
+async function loadTargetStates() {
+  const response = await fetch(SOURCE_INDEX_URL, {
+    headers: {
+      "User-Agent": "pavelski-zope-map-builder"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not load state catalog (${response.status})`);
+  }
+
+  const payload = await response.json();
+  if (!Array.isArray(payload)) {
+    throw new Error("Unexpected state catalog format.");
+  }
+
+  const states = payload
+    .map((entry) => parseStateSourceFile(String(entry?.name || "")))
+    .filter(Boolean)
+    .sort((a, b) => a.state.localeCompare(b.state));
+
+  if (states.length !== 50) {
+    throw new Error(`Expected 50 states but found ${states.length} in source catalog.`);
+  }
+
+  return states;
+}
 
 function toNumber(value) {
   const parsed = Number.parseFloat(String(value));
@@ -265,16 +310,19 @@ async function main() {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const projectRoot = path.resolve(here, "..");
   const outputDir = path.join(projectRoot, "public", "data");
+  const targetStates = await loadTargetStates();
+  console.log(`Loaded ${targetStates.length} states from source catalog.`);
 
-  const zoneMap = new Map();
+  const zones = [];
   const cityMap = new Map();
   const stateStats = new Map();
 
-  for (const stateConfig of TARGET_STATES) {
+  for (const stateConfig of targetStates) {
     const { state, stateName, file } = stateConfig;
     console.log(`Downloading ${state} ZIP boundaries...`);
 
     const rawGeojson = await downloadStateGeojson(file);
+    const stateZoneMap = new Map();
     let featureCount = 0;
 
     for (const feature of rawGeojson.features) {
@@ -303,10 +351,10 @@ async function main() {
           ? Math.round(lookup.population)
           : 0;
 
-      let zone = zoneMap.get(zoneId);
+      let zone = stateZoneMap.get(zoneId);
       if (!zone) {
         zone = createZone(zoneId, state, stateName, zip3);
-        zoneMap.set(zoneId, zone);
+        stateZoneMap.set(zoneId, zone);
       }
 
       zone.zips.add(zip5);
@@ -349,22 +397,7 @@ async function main() {
       featureCount += 1;
     }
 
-    stateStats.set(state, {
-      state,
-      stateName,
-      featureCount,
-      zoneCount: 0,
-      cityCount: 0,
-      population: 0
-    });
-
-    console.log(`${state}: ${featureCount} ZIP5 processed`);
-  }
-
-  console.log("Dissolving ZIP5 boundaries into ZIP3 zone contours...");
-
-  const zones = [...zoneMap.values()]
-    .map((zone) => ({
+    const stateZones = [...stateZoneMap.values()].map((zone) => ({
       zoneId: zone.zoneId,
       state: zone.state,
       stateName: zone.stateName,
@@ -381,15 +414,32 @@ async function main() {
       topZipCity: zone.topZipCity,
       topZipPopulation: zone.topZipPopulation,
       geometry: dissolveZoneGeometry(zone)
-    }))
+    }));
+
+    zones.push(...stateZones);
+
+    stateStats.set(state, {
+      state,
+      stateName,
+      featureCount,
+      zoneCount: stateZones.length,
+      cityCount: 0,
+      population: 0
+    });
+
+    console.log(`${state}: ${featureCount} ZIP5 processed, ${stateZones.length} ZIP3 zones dissolved`);
+  }
+
+  const rankedZones = zones
+    .slice()
     .sort((a, b) => b.population - a.population || a.label.localeCompare(b.label));
 
-  const hotspotCount = Math.max(1, Math.ceil(zones.length * 0.15));
-  const hotspotSet = new Set(zones.slice(0, hotspotCount).map((zone) => zone.zoneId));
+  const hotspotCount = Math.max(1, Math.ceil(rankedZones.length * 0.15));
+  const hotspotSet = new Set(rankedZones.slice(0, hotspotCount).map((zone) => zone.zoneId));
   const stateRanksByZoneId = new Map();
 
   const zonesByState = new Map();
-  for (const zone of zones) {
+  for (const zone of rankedZones) {
     if (!zonesByState.has(zone.state)) {
       zonesByState.set(zone.state, []);
     }
@@ -409,7 +459,7 @@ async function main() {
     });
   }
 
-  const zonesWithRank = zones
+  const zonesWithRank = rankedZones
     .map((zone, index) => {
       const stateRank = stateRanksByZoneId.get(zone.zoneId);
 
@@ -486,7 +536,7 @@ async function main() {
     isPopulationHotspot: zone.isPopulationHotspot
   }));
 
-  const states = TARGET_STATES.map((stateConfig) => {
+  const states = targetStates.map((stateConfig) => {
     const base = stateStats.get(stateConfig.state);
     const zoneCount = zonesForJson.filter((zone) => zone.state === stateConfig.state).length;
     const cityCount = cities.filter((city) => city.state === stateConfig.state).length;

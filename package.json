@@ -1,9 +1,9 @@
 {
-  "name": "ohio-zip3-map",
+  "name": "pavelski-zope-map",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Interactive multi-state ZIP3 coverage map with city labels and population hotspots",
+  "description": "Pavelski Zope Map: interactive US ZIP3 coverage map with state ranking and population hotspots",
   "scripts": {
     "prepare-data": "node scripts/build-data.mjs",
     "start": "node server.js",

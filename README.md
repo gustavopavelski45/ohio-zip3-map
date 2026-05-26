@@ -1,13 +1,14 @@
-# ZIP3 Multi-State Coverage Map
+# Pavelski Zope Map
 
-Mapa interativo por `ZIP3` com:
+Mapa interativo dos Estados Unidos por `ZIP3`, com:
 
-- cobertura multiestado (OH, PA, MI, NJ, NY, NH, NC, SC, CT);
-- cobertura multiestado (OH, PA, MI, NJ, NY, NH, NC, SC, CT, GA, DE, MD, CA, FL, VA, KY);
-- zonas ativas com transparência;
-- destaque automático para zonas mais populosas;
-- cidades visíveis no mapa;
-- busca por estado, ZIP3 e cidade.
+- cobertura dos 50 estados (fonte OpenDataDE, sem DC);
+- contorno de zona por agregacao de ZIP5;
+- transparencia por zona ativa;
+- destaque automatico para zonas mais populosas;
+- rank populacional geral e rank dentro do estado;
+- ZIP5 lider (maior populacao) dentro de cada zona;
+- cidades exibidas no mapa e busca por estado/ZIP3/cidade.
 
 ## Requisitos
 
@@ -26,14 +27,32 @@ Abra:
 
 - http://localhost:8787
 
+## Login (usuario e senha)
+
+O app usa autenticacao HTTP Basic por padrao.
+
+Credenciais padrao local:
+
+- usuario: `pavelski`
+- senha: `zope2026`
+
+Para alterar em producao (Railway), configure variaveis de ambiente:
+
+- `APP_USER`
+- `APP_PASSWORD`
+
+Para desativar autenticacao (opcional):
+
+- `AUTH_DISABLED=true`
+
 ## Scripts
 
-- `npm run prepare-data`: baixa os limites ZIP por estado, agrega em zonas `STATE-ZIP3` e gera:
+- `npm run prepare-data`: baixa os limites ZIP5 por estado, agrega em zonas `STATE-ZIP3` e gera:
   - `public/data/coverage_zip3.geojson`
   - `public/data/coverage_zip3_zones.json`
   - `public/data/coverage_cities.json`
   - `public/data/coverage_states.json`
-- `npm run start`: sobe servidor estático na porta `8787`
+- `npm run start`: sobe servidor na porta `8787`
 - `npm run dev`: gera dados e sobe servidor
 
 ## Definir zonas de trabalho
@@ -49,28 +68,16 @@ Edite `public/data/work_zones.json`.
 }
 ```
 
-### Exemplo por zona específica (`STATE-ZIP3`)
+### Exemplo por zona especifica (`STATE-ZIP3`)
 
 ```json
 {
-  "name": "Zonas específicas",
+  "name": "Zonas especificas",
   "zones": ["PA-152", "NJ-070", "NY-100"]
-}
-```
-
-### Compatibilidade com formato antigo
-
-```json
-{
-  "zip3": ["432", "441"]
 }
 ```
 
 ## Fontes de dados
 
 - Limites ZIP/ZCTA: `OpenDataDE/State-zip-code-GeoJSON`
-- Cidade/lat/lon/população por ZIP: pacote npm `zipcode-detail-lookup`
-
-## Observação técnica
-
-As geometrias exibidas no mapa são zonas `ZIP3` simplificadas a partir de ZCTA para manter performance visual em vários estados.
+- Cidade/lat/lon/populacao por ZIP: pacote npm `zipcode-detail-lookup`
