@@ -302,13 +302,19 @@ h1 {
   width: 14px;
   height: 14px;
   border-radius: 4px;
-  background: rgba(37, 99, 235, 0.46);
-  border: 1px solid rgba(16, 43, 89, 0.45);
+  background: rgba(0, 229, 255, 0.42);
+  border: 2px solid #00e5ff;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.75) inset,
+    0 0 9px rgba(0, 229, 255, 0.9);
 }
 
 .swatch.hotspot {
-  background: rgba(245, 158, 11, 0.5);
-  border-color: rgba(146, 64, 14, 0.7);
+  background: rgba(250, 255, 0, 0.34);
+  border-color: #faff00;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.75) inset,
+    0 0 9px rgba(250, 255, 0, 0.82);
 }
 
 .swatch.county {
@@ -316,13 +322,17 @@ h1 {
     linear-gradient(135deg, rgba(103, 232, 249, 0.5) 0 34%, rgba(253, 230, 138, 0.48) 34% 67%, rgba(196, 181, 253, 0.48) 67% 100%);
   border-color: #115e59;
   border-style: dashed;
+  box-shadow: none;
 }
 
 .swatch.combined {
   background:
-    linear-gradient(135deg, rgba(37, 99, 235, 0.48) 0 45%, rgba(103, 232, 249, 0.36) 45% 70%, rgba(253, 230, 138, 0.36) 70% 100%);
-  border-color: #111827;
+    linear-gradient(135deg, rgba(0, 229, 255, 0.62) 0 45%, rgba(103, 232, 249, 0.36) 45% 70%, rgba(253, 230, 138, 0.36) 70% 100%);
+  border-color: #00e5ff;
   border-style: dashed;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.75) inset,
+    0 0 9px rgba(0, 229, 255, 0.9);
 }
 
 .city-label {

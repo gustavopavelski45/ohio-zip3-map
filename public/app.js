@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v10";
+const DATA_VERSION = "all-us-v11";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -22,11 +22,13 @@ function createMapPane(name, zIndex, pointerEvents = "auto") {
 createMapPane("county-fill-pane", 380);
 createMapPane("zip3-pane", 430);
 createMapPane("county-outline-pane", 470, "none");
+createMapPane("zip3-glow-pane", 482, "none");
 createMapPane("primary-county-pane", 490, "none");
 
 const countyFillRenderer = L.canvas({ pane: "county-fill-pane", padding: 0.5 });
 const zip3Renderer = L.canvas({ pane: "zip3-pane", padding: 0.5 });
 const countyOutlineRenderer = L.canvas({ pane: "county-outline-pane", padding: 0.5 });
+const zip3GlowRenderer = L.canvas({ pane: "zip3-glow-pane", padding: 0.5 });
 const primaryCountyRenderer = L.canvas({ pane: "primary-county-pane", padding: 0.5 });
 
 map.setView([40.2, -79.2], 6);
@@ -57,6 +59,7 @@ const state = {
   countyFeatureByFips: new Map(),
   boundsByZoneId: new Map(),
   zoneLayer: null,
+  zoneGlowLayer: null,
   countyLayer: null,
   countyOutlineLayer: null,
   primaryCountyLayer: null,
@@ -517,6 +520,68 @@ function styleForFeature(feature) {
   };
 }
 
+function styleForZip3GlowFeature(feature) {
+  const zoneId = feature.properties.zoneId;
+  const zone = state.zoneById.get(zoneId);
+  const isSelected = state.selectedZoneId === zoneId;
+  const hasSelection = Boolean(state.selectedZoneId);
+  const isActive = isActiveZone(zoneId);
+  const isMuted = hasSelection && !isSelected;
+  const isHotspot = state.highlightHotspots && isZoneHotspot(zone);
+
+  if (!zone || !isActive) {
+    return {
+      color: "#67e8f9",
+      weight: 0,
+      opacity: 0,
+      fillOpacity: 0,
+      interactive: false
+    };
+  }
+
+  if (isSelected) {
+    return {
+      color: "#39ff14",
+      weight: 7.5,
+      opacity: 0.96,
+      fillOpacity: 0,
+      dashArray: null,
+      interactive: false
+    };
+  }
+
+  if (isMuted) {
+    return {
+      color: "#22d3ee",
+      weight: 1.6,
+      opacity: 0.22,
+      fillOpacity: 0,
+      dashArray: null,
+      interactive: false
+    };
+  }
+
+  if (isHotspot) {
+    return {
+      color: "#faff00",
+      weight: 5.2,
+      opacity: 0.82,
+      fillOpacity: 0,
+      dashArray: "1,5",
+      interactive: false
+    };
+  }
+
+  return {
+    color: "#00e5ff",
+    weight: 3.4,
+    opacity: 0.74,
+    fillOpacity: 0,
+    dashArray: null,
+    interactive: false
+  };
+}
+
 function styleForCountyFeature(feature) {
   const isCombined = state.mapLayerMode === "both";
 
@@ -707,6 +772,10 @@ function refreshStyles() {
     state.zoneLayer.setStyle(styleForFeature);
     bringSelectionToFront();
   }
+
+  if (state.zoneGlowLayer) {
+    state.zoneGlowLayer.setStyle(styleForZip3GlowFeature);
+  }
 }
 
 function setLayerVisible(layer, visible) {
@@ -750,11 +819,11 @@ function refreshLayerLegendText() {
   }
 
   if (state.mapLayerMode === "both") {
-    legendLayerLabelEl.textContent = "ZIP3 + counties coloridos";
+    legendLayerLabelEl.textContent = "ZIP3 neon + counties";
     return;
   }
 
-  legendLayerLabelEl.textContent = "Zona ZIP3 ativa";
+  legendLayerLabelEl.textContent = "Zona ZIP3 neon";
 }
 
 function refreshLayerVisibility() {
@@ -762,9 +831,11 @@ function refreshLayerVisibility() {
   setLayerVisible(state.countyLayer, shouldShowCountyLayer());
   setLayerVisible(state.countyOutlineLayer, shouldShowCountyOutlineLayer());
   setLayerVisible(state.zoneLayer, shouldShowZip3Layer());
+  setLayerVisible(state.zoneGlowLayer, shouldShowZip3Layer());
 
   if (shouldShowZip3Layer()) {
     bringLayerToFront(state.zoneLayer);
+    bringLayerToFront(state.zoneGlowLayer);
   }
 
   if (shouldShowCountyOutlineLayer()) {
@@ -1154,6 +1225,12 @@ function buildCountyLayers(geojson) {
 }
 
 function buildZoneLayer(geojson) {
+  state.zoneGlowLayer = L.geoJSON(geojson, {
+    renderer: zip3GlowRenderer,
+    interactive: false,
+    style: styleForZip3GlowFeature
+  });
+
   state.zoneLayer = L.geoJSON(geojson, {
     renderer: zip3Renderer,
     style: styleForFeature,
