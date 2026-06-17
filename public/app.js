@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v12";
+const DATA_VERSION = "all-us-v13";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -22,12 +22,14 @@ function createMapPane(name, zIndex, pointerEvents = "auto") {
 createMapPane("county-fill-pane", 380);
 createMapPane("zip3-pane", 430);
 createMapPane("county-outline-pane", 470, "none");
+createMapPane("secret-focus-pane", 476, "none");
 createMapPane("zip3-glow-pane", 482, "none");
 createMapPane("primary-county-pane", 490, "none");
 
 const countyFillRenderer = L.canvas({ pane: "county-fill-pane", padding: 0.5 });
 const zip3Renderer = L.canvas({ pane: "zip3-pane", padding: 0.5 });
 const countyOutlineRenderer = L.canvas({ pane: "county-outline-pane", padding: 0.5 });
+const secretFocusRenderer = L.canvas({ pane: "secret-focus-pane", padding: 0.5 });
 const zip3GlowRenderer = L.canvas({ pane: "zip3-glow-pane", padding: 0.5 });
 const primaryCountyRenderer = L.canvas({ pane: "primary-county-pane", padding: 0.5 });
 
@@ -60,6 +62,11 @@ const state = {
   boundsByZoneId: new Map(),
   zoneLayer: null,
   zoneGlowLayer: null,
+  secretFocusLayer: null,
+  secretFocusEnabled: false,
+  secretFocusZoneIds: new Set(),
+  secretFocusByZoneId: new Map(),
+  secretFocusTotals: null,
   countyLayer: null,
   countyOutlineLayer: null,
   primaryCountyLayer: null,
@@ -94,6 +101,8 @@ const volume30DayMaxInput = document.querySelector("#volume-30day-max");
 const mortgageLoansMinInput = document.querySelector("#mortgage-loans-min");
 const housingMinInput = document.querySelector("#housing-min");
 const resetFiltersButton = document.querySelector("#reset-filters");
+const secretFocusToggleButton = document.querySelector("#secret-focus-toggle");
+const secretFocusSummaryEl = document.querySelector("#secret-focus-summary");
 const modeHintEl = document.querySelector("#analysis-mode-hint");
 const filterSummaryEl = document.querySelector("#filter-summary");
 const toggleCitiesInput = document.querySelector("#toggle-cities");
@@ -609,6 +618,21 @@ function styleForCountyOutlineFeature() {
   };
 }
 
+function styleForSecretFocusFeature(feature) {
+  const zoneId = feature.properties?.zoneId;
+  const isSelected = state.selectedZoneId === zoneId;
+
+  return {
+    color: isSelected ? "#be185d" : "#ff1493",
+    weight: isSelected ? 3 : 2.1,
+    opacity: isSelected ? 0.98 : 0.86,
+    fillColor: "#ff4fb8",
+    fillOpacity: isSelected ? 0.44 : 0.3,
+    dashArray: isSelected ? null : "5,4",
+    interactive: false
+  };
+}
+
 function styleForPrimaryCountyFeature() {
   return {
     color: "#7c2d12",
@@ -693,6 +717,14 @@ function zonePerformanceSummaryBlock(zone) {
   `;
 }
 
+function secretFocusSummaryBlock(zone) {
+  if (!state.secretFocusEnabled || !isSecretFocusZone(zone.zoneId)) {
+    return "";
+  }
+
+  return `Camada rosa: <strong>${escapeHtml(secretFocusMetricSummary(zone.zoneId))}</strong><br/>`;
+}
+
 function formatSummaryPopup(zone) {
   const onTimeLabel = zone.hasZonePerformanceData ? formatPercent(zone.onTimePct) : "N/D";
   const volumeLabel = zone.hasZonePerformanceData ? formatNumber(zone.volume30Day) : "N/D";
@@ -704,7 +736,8 @@ function formatSummaryPopup(zone) {
     ZIP principal: <strong>${escapeHtml(primaryZipSummary(zone))}</strong><br/>
     On-time: <strong>${escapeHtml(onTimeLabel)}</strong><br/>
     Volume 30 dias: <strong>${escapeHtml(volumeLabel)}</strong><br/>
-    County principal: <strong>${escapeHtml(primaryCountySummary(zone))}</strong>
+    County principal: <strong>${escapeHtml(primaryCountySummary(zone))}</strong><br/>
+    ${secretFocusSummaryBlock(zone)}
   `;
 }
 
@@ -736,6 +769,7 @@ function formatPopup(feature) {
     ${delinquencySummaryBlock(zone)}<br/>
     ${cfpbDelinquencySummaryBlock(zone)}<br/>
     ${zonePerformanceSummaryBlock(zone)}<br/>
+    ${secretFocusSummaryBlock(zone)}
     Hotspot ativo no modo atual: ${hotspotLabel}<br/>
     <small>${escapeHtml(cityPreview(zone.cities, 7))}</small>
   `;
@@ -766,6 +800,10 @@ function refreshStyles() {
 
   if (state.primaryCountyLayer) {
     state.primaryCountyLayer.setStyle(styleForPrimaryCountyFeature);
+  }
+
+  if (state.secretFocusLayer) {
+    state.secretFocusLayer.setStyle(styleForSecretFocusFeature);
   }
 
   if (state.zoneLayer) {
@@ -831,10 +869,12 @@ function refreshLayerVisibility() {
   setLayerVisible(state.countyLayer, shouldShowCountyLayer());
   setLayerVisible(state.countyOutlineLayer, shouldShowCountyOutlineLayer());
   setLayerVisible(state.zoneLayer, shouldShowZip3Layer());
+  setLayerVisible(state.secretFocusLayer, state.secretFocusEnabled && shouldShowZip3Layer());
   setLayerVisible(state.zoneGlowLayer, shouldShowZip3Layer());
 
   if (shouldShowZip3Layer()) {
     bringLayerToFront(state.zoneLayer);
+    bringLayerToFront(state.secretFocusLayer);
     bringLayerToFront(state.zoneGlowLayer);
   }
 
@@ -1015,13 +1055,17 @@ function refreshSelectionDetails() {
   const volumeLabel = zone.hasZonePerformanceData ? `${formatNumber(zone.volume30Day)} vol 30d` : "Volume 30d N/D";
   const onTimeLabel = zone.hasZonePerformanceData ? `OT ${escapeHtml(formatPercent(zone.onTimePct))}` : "OT N/D";
   const countyLabel = primaryCountySummary(zone);
+  const secretFocusLabel =
+    state.secretFocusEnabled && isSecretFocusZone(zone.zoneId)
+      ? `<br/>Camada rosa: <strong>${escapeHtml(secretFocusMetricSummary(zone.zoneId))}</strong>`
+      : "";
 
   selectionDetailsEl.innerHTML = `
     <strong>Zona escolhida: ${escapeHtml(zone.label)}</strong><br/>
     County principal: <strong>${escapeHtml(countyLabel)}</strong><br/>
     ZIP principal: <strong>${escapeHtml(primaryZipSummary(zone))}</strong><br/>
     Score oportunidade: <strong>${escapeHtml(formatScore(zone.mortgageOpportunityScore))}</strong> • Mortgage: <strong>${formatNumber(zone.mortgageOriginationsCount)}</strong> loans<br/>
-    ${escapeHtml(volumeLabel)} • ${onTimeLabel} • Casas: <strong>${formatNumber(zone.housingUnitsEstimate)}</strong>
+    ${escapeHtml(volumeLabel)} • ${onTimeLabel} • Casas: <strong>${formatNumber(zone.housingUnitsEstimate)}</strong>${secretFocusLabel}
   `;
 }
 
@@ -1224,7 +1268,31 @@ function buildCountyLayers(geojson) {
   });
 }
 
+function buildSecretFocusLayer(geojson) {
+  const focusFeatures = (geojson.features || []).filter((feature) =>
+    state.secretFocusZoneIds.has(feature.properties?.zoneId)
+  );
+
+  if (focusFeatures.length === 0) {
+    return;
+  }
+
+  state.secretFocusLayer = L.geoJSON(
+    {
+      type: "FeatureCollection",
+      features: focusFeatures
+    },
+    {
+      renderer: secretFocusRenderer,
+      interactive: false,
+      style: styleForSecretFocusFeature
+    }
+  );
+}
+
 function buildZoneLayer(geojson) {
+  buildSecretFocusLayer(geojson);
+
   state.zoneGlowLayer = L.geoJSON(geojson, {
     renderer: zip3GlowRenderer,
     interactive: false,
@@ -1340,9 +1408,20 @@ function renderZoneList() {
     if (isZoneHotspot(zone)) {
       classes.push("hotspot");
     }
+    if (state.secretFocusEnabled && isSecretFocusZone(zone.zoneId)) {
+      classes.push("secret-focus-zone");
+    }
     button.className = classes.join(" ");
 
     const hotspotTag = isZoneHotspot(zone) ? `<span class="zone-tag">HOT</span>` : "";
+    const secretFocusTag =
+      state.secretFocusEnabled && isSecretFocusZone(zone.zoneId)
+        ? `<span class="zone-tag secret">ROSA</span>`
+        : "";
+    const secretFocusLine =
+      state.secretFocusEnabled && isSecretFocusZone(zone.zoneId)
+        ? `<div class="zone-cities secret-focus-line">Camada rosa: ${escapeHtml(secretFocusMetricSummary(zone.zoneId))}</div>`
+        : "";
 
     if (isZonePerformanceMode()) {
       button.innerHTML = `
@@ -1350,8 +1429,9 @@ function renderZoneList() {
           <span>${escapeHtml(zone.label)}</span>
           <span>${formatNumber(zone.volume30Day || 0)} vol</span>
         </div>
-        <div class="zone-meta">${escapeHtml(zone.stateName)} • OT ${escapeHtml(formatPercent(zone.onTimePct))} ${hotspotTag}</div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • OT ${escapeHtml(formatPercent(zone.onTimePct))} ${hotspotTag} ${secretFocusTag}</div>
         <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
+        ${secretFocusLine}
         <div class="zone-cities">Rank volume: #${formatNumber(zone.volume30DayRank)} • rank estado ${formatRank(zone.volume30DayStateRank, zone.volume30DayStateZoneCount)}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
       `;
@@ -1361,8 +1441,9 @@ function renderZoneList() {
           <span>${escapeHtml(zone.label)}</span>
           <span>${formatNumber(zone.cfpbDistressComplaintCount)} complaints</span>
         </div>
-        <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.cfpbDistressScore))} • rank #${formatNumber(zone.cfpbDistressRank)} ${hotspotTag}</div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.cfpbDistressScore))} • rank #${formatNumber(zone.cfpbDistressRank)} ${hotspotTag} ${secretFocusTag}</div>
         <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
+        ${secretFocusLine}
         <div class="zone-cities">Nao pontuais: ${formatNumber(zone.cfpbDistressUntimelyCount)} (${escapeHtml(formatPercent(zone.cfpbDistressUntimelySharePct))}) • ${escapeHtml(formatNumber(zone.cfpbDistressComplaintsPer100k))}/100k hab</div>
         <div class="zone-cities">Rank estado: ${formatRank(zone.cfpbDistressStateRank, zone.cfpbDistressStateZoneCount)} • inicio ${escapeHtml(zone.cfpbDistressDateReceivedMin || "N/D")}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
@@ -1373,8 +1454,9 @@ function renderZoneList() {
           <span>${escapeHtml(zone.label)}</span>
           <span>${formatNumber(zone.estimatedDelinquentLoans)} delinquent</span>
         </div>
-        <div class="zone-meta">${escapeHtml(zone.stateName)} • taxa ${escapeHtml(formatPercent(zone.estimatedDelinquencyRatePct))} • risco ${escapeHtml(formatScore(zone.delinquencyRiskScore))} ${hotspotTag}</div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • taxa ${escapeHtml(formatPercent(zone.estimatedDelinquencyRatePct))} • risco ${escapeHtml(formatScore(zone.delinquencyRiskScore))} ${hotspotTag} ${secretFocusTag}</div>
         <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
+        ${secretFocusLine}
         <div class="zone-cities">Volume proxy: ${escapeHtml(formatCurrency(zone.estimatedDelinquentVolume))} • rank estado ${formatRank(zone.delinquencyEstimatedStateRank, zone.delinquencyStateZoneCount)}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
       `;
@@ -1384,8 +1466,9 @@ function renderZoneList() {
           <span>${escapeHtml(zone.label)}</span>
           <span>${formatNumber(zone.mortgageOriginationsCount)} loans</span>
         </div>
-        <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.mortgageOpportunityScore))} • rank oportunidade #${formatNumber(zone.mortgageOpportunityRank)} ${hotspotTag}</div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.mortgageOpportunityScore))} • rank oportunidade #${formatNumber(zone.mortgageOpportunityRank)} ${hotspotTag} ${secretFocusTag}</div>
         <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
+        ${secretFocusLine}
         <div class="zone-cities">Volume estimado: ${escapeHtml(formatCurrency(zone.mortgageOriginationsAmount))} • rank estado ${formatRank(zone.mortgageStateRank, zone.mortgageStateZoneCount)}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
       `;
@@ -1395,8 +1478,9 @@ function renderZoneList() {
           <span>${escapeHtml(zone.label)}</span>
           <span>${formatNumber(zone.population)}</span>
         </div>
-        <div class="zone-meta">${escapeHtml(zone.stateName)} • ${zone.zipCount} ZIP5 • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)} • rank geral #${zone.populationRank} ${hotspotTag}</div>
+        <div class="zone-meta">${escapeHtml(zone.stateName)} • ${zone.zipCount} ZIP5 • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)} • rank geral #${zone.populationRank} ${hotspotTag} ${secretFocusTag}</div>
         <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
+        ${secretFocusLine}
         <div class="zone-cities">ZIP lider: ${escapeHtml(topZipSummary(zone))}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
         <div class="zone-cities">${escapeHtml(cityPreview(zone.cities, 7))}</div>
@@ -1607,6 +1691,84 @@ function attachZonePerformanceData(payload) {
   state.zonePerformanceTotals = payload.totals || null;
 }
 
+function attachSecretFocusData(payload) {
+  state.secretFocusZoneIds = new Set();
+  state.secretFocusByZoneId = new Map();
+  state.secretFocusTotals = null;
+
+  if (!payload || !Array.isArray(payload.zones)) {
+    return;
+  }
+
+  for (const zone of payload.zones) {
+    const zoneId = normalizeZoneId(zone.zoneId);
+    if (!zoneId || !state.zoneById.has(zoneId)) {
+      continue;
+    }
+
+    const entry = {
+      zoneId,
+      volume30Day: Number(zone.volume30Day) || 0,
+      onTimePct: Number.isFinite(Number(zone.onTimePct)) ? Number(zone.onTimePct) : null
+    };
+    state.secretFocusZoneIds.add(zoneId);
+    state.secretFocusByZoneId.set(zoneId, entry);
+  }
+
+  const totalVolume30Day = [...state.secretFocusByZoneId.values()].reduce(
+    (sum, zone) => sum + zone.volume30Day,
+    0
+  );
+  const weightedOnTimePct = totalVolume30Day > 0
+    ? [...state.secretFocusByZoneId.values()].reduce(
+      (sum, zone) => sum + zone.volume30Day * (zone.onTimePct || 0),
+      0
+    ) / totalVolume30Day
+    : null;
+
+  state.secretFocusTotals = {
+    zoneCount: state.secretFocusZoneIds.size,
+    totalVolume30Day,
+    weightedOnTimePct
+  };
+}
+
+function isSecretFocusZone(zoneId) {
+  return state.secretFocusZoneIds.has(zoneId);
+}
+
+function secretFocusMetricSummary(zoneId) {
+  const focus = state.secretFocusByZoneId.get(zoneId);
+  if (!focus) {
+    return "";
+  }
+
+  return `${formatNumber(focus.volume30Day)} vol 30d • OT ${formatPercent(focus.onTimePct)}`;
+}
+
+function refreshSecretFocusUi() {
+  if (secretFocusToggleButton) {
+    secretFocusToggleButton.classList.toggle("active", state.secretFocusEnabled);
+    secretFocusToggleButton.setAttribute("aria-pressed", String(state.secretFocusEnabled));
+  }
+
+  if (!secretFocusSummaryEl) {
+    return;
+  }
+
+  if (!state.secretFocusEnabled || !state.secretFocusTotals) {
+    secretFocusSummaryEl.hidden = true;
+    secretFocusSummaryEl.textContent = "";
+    return;
+  }
+
+  secretFocusSummaryEl.hidden = false;
+  secretFocusSummaryEl.textContent =
+    `Camada rosa ativa: ${formatNumber(state.secretFocusTotals.zoneCount)} zonas • ` +
+    `${formatNumber(state.secretFocusTotals.totalVolume30Day)} vol 30d • ` +
+    `OT ${formatPercent(state.secretFocusTotals.weightedOnTimePct)}`;
+}
+
 function syncFilterStateFromInputs() {
   state.filters.scoreMin = scoreMinInput?.value || "";
   state.filters.scoreMax = scoreMaxInput?.value || "";
@@ -1687,6 +1849,15 @@ function setupControls() {
     applyFilterChanges();
   });
 
+  secretFocusToggleButton?.addEventListener("click", () => {
+    state.secretFocusEnabled = !state.secretFocusEnabled;
+    refreshSecretFocusUi();
+    refreshLayerVisibility();
+    renderZoneList();
+    refreshStats();
+    refreshDecisionPanel();
+  });
+
   modeSelect.addEventListener("change", (event) => {
     const nextMode = String(event.target.value || "population");
     if (
@@ -1758,13 +1929,14 @@ function setupControls() {
 }
 
 async function loadData() {
-  const [geoResp, zonesResp, citiesResp, statesResp, performanceResp, countiesResp] = await Promise.all([
+  const [geoResp, zonesResp, citiesResp, statesResp, performanceResp, countiesResp, secretFocusResp] = await Promise.all([
     fetch(`./data/coverage_zip3.geojson?v=${DATA_VERSION}`),
     fetch(`./data/coverage_zip3_zones.json?v=${DATA_VERSION}`),
     fetch(`./data/coverage_cities.json?v=${DATA_VERSION}`),
     fetch(`./data/coverage_states.json?v=${DATA_VERSION}`),
     fetch(`./data/zone_performance_30day.json?v=${DATA_VERSION}`).catch(() => null),
-    fetch(`./data/coverage_counties.geojson?v=${DATA_VERSION}`).catch(() => null)
+    fetch(`./data/coverage_counties.geojson?v=${DATA_VERSION}`).catch(() => null),
+    fetch(`./data/secret_focus_zones.json?v=${DATA_VERSION}`).catch(() => null)
   ]);
 
   if (!geoResp.ok || !zonesResp.ok || !citiesResp.ok || !statesResp.ok) {
@@ -1798,6 +1970,10 @@ async function loadData() {
     attachZonePerformanceData(await performanceResp.json());
   }
 
+  if (secretFocusResp?.ok) {
+    attachSecretFocusData(await secretFocusResp.json());
+  }
+
   state.activeZoneIds = new Set(state.zones.map((zone) => zone.zoneId));
   await loadWorkZones();
 
@@ -1823,6 +1999,7 @@ async function loadData() {
   refreshModeText();
   renderZoneList();
   refreshStats();
+  refreshSecretFocusUi();
   refreshDecisionPanel();
 }
 
