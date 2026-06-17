@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v11";
+const DATA_VERSION = "all-us-v12";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -542,7 +542,7 @@ function styleForZip3GlowFeature(feature) {
   if (isSelected) {
     return {
       color: "#39ff14",
-      weight: 7.5,
+      weight: 5.4,
       opacity: 0.96,
       fillOpacity: 0,
       dashArray: null,
@@ -553,7 +553,7 @@ function styleForZip3GlowFeature(feature) {
   if (isMuted) {
     return {
       color: "#22d3ee",
-      weight: 1.6,
+      weight: 1,
       opacity: 0.22,
       fillOpacity: 0,
       dashArray: null,
@@ -564,7 +564,7 @@ function styleForZip3GlowFeature(feature) {
   if (isHotspot) {
     return {
       color: "#faff00",
-      weight: 5.2,
+      weight: 3.6,
       opacity: 0.82,
       fillOpacity: 0,
       dashArray: "1,5",
@@ -574,7 +574,7 @@ function styleForZip3GlowFeature(feature) {
 
   return {
     color: "#00e5ff",
-    weight: 3.4,
+    weight: 2.2,
     opacity: 0.74,
     fillOpacity: 0,
     dashArray: null,
