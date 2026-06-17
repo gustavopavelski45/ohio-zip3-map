@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v8";
+const DATA_VERSION = "all-us-v10";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -11,6 +11,23 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 }).addTo(map);
+
+function createMapPane(name, zIndex, pointerEvents = "auto") {
+  const pane = map.createPane(name);
+  pane.style.zIndex = String(zIndex);
+  pane.style.pointerEvents = pointerEvents;
+  return pane;
+}
+
+createMapPane("county-fill-pane", 380);
+createMapPane("zip3-pane", 430);
+createMapPane("county-outline-pane", 470, "none");
+createMapPane("primary-county-pane", 490, "none");
+
+const countyFillRenderer = L.canvas({ pane: "county-fill-pane", padding: 0.5 });
+const zip3Renderer = L.canvas({ pane: "zip3-pane", padding: 0.5 });
+const countyOutlineRenderer = L.canvas({ pane: "county-outline-pane", padding: 0.5 });
+const primaryCountyRenderer = L.canvas({ pane: "primary-county-pane", padding: 0.5 });
 
 map.setView([40.2, -79.2], 6);
 map.on("zoomend moveend", () => {
@@ -37,11 +54,22 @@ const state = {
   activeZoneIds: new Set(),
   zoneById: new Map(),
   countyByFips: new Map(),
+  countyFeatureByFips: new Map(),
   boundsByZoneId: new Map(),
   zoneLayer: null,
   countyLayer: null,
   countyOutlineLayer: null,
+  primaryCountyLayer: null,
   filter: "",
+  filters: {
+    scoreMin: "",
+    scoreMax: "",
+    volume30DayMin: "",
+    volume30DayMax: "",
+    mortgageLoansMin: "",
+    housingMin: ""
+  },
+  mapShowsFilteredZones: true,
   mapLayerMode: "zip3",
   popupMode: "summary",
   showCities: true,
@@ -56,13 +84,23 @@ const filterInput = document.querySelector("#zip3-filter");
 const modeSelect = document.querySelector("#analysis-mode");
 const layerModeSelect = document.querySelector("#map-layer-mode");
 const popupModeSelect = document.querySelector("#popup-mode");
+const scoreMinInput = document.querySelector("#score-min");
+const scoreMaxInput = document.querySelector("#score-max");
+const volume30DayMinInput = document.querySelector("#volume-30day-min");
+const volume30DayMaxInput = document.querySelector("#volume-30day-max");
+const mortgageLoansMinInput = document.querySelector("#mortgage-loans-min");
+const housingMinInput = document.querySelector("#housing-min");
+const resetFiltersButton = document.querySelector("#reset-filters");
 const modeHintEl = document.querySelector("#analysis-mode-hint");
+const filterSummaryEl = document.querySelector("#filter-summary");
 const toggleCitiesInput = document.querySelector("#toggle-cities");
 const toggleZip3LabelsInput = document.querySelector("#toggle-zip3-labels");
 const toggleCountyLabelsInput = document.querySelector("#toggle-county-labels");
 const toggleHotspotsInput = document.querySelector("#toggle-hotspots");
+const toggleFilteredMapInput = document.querySelector("#toggle-filtered-map");
 const zoneListEl = document.querySelector("#zone-list");
 const statsEl = document.querySelector("#stats");
+const selectionDetailsEl = document.querySelector("#selection-details");
 const legendLayerSwatchEl = document.querySelector(".legend .swatch:not(.hotspot)");
 const legendLayerLabelEl = document.querySelector("#legend-layer-label");
 const legendHotspotLabelEl = document.querySelector("#legend-hotspot-label");
@@ -126,6 +164,19 @@ function formatPercent(value) {
   return `${numericValue.toFixed(2)}%`;
 }
 
+function parseFilterNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+
+  const numericValue = Number(String(value).replaceAll(",", "").trim());
+  return Number.isFinite(numericValue) ? numericValue : null;
+}
+
+function getNumericFilter(key) {
+  return parseFilterNumber(state.filters[key]);
+}
+
 function topZipSummary(zone) {
   if (!zone || !zone.topZip5 || !Number.isFinite(Number(zone.topZipPopulation)) || zone.topZipPopulation <= 0) {
     return "N/D";
@@ -168,6 +219,38 @@ function primaryCountySummary(zone) {
   }
 
   return zone.primaryCountyName ? `${zone.primaryCountyName} County` : zone.primaryCountyFips;
+}
+
+function opportunityScoreForFilter(zone) {
+  const score = Number(zone?.mortgageOpportunityScore);
+  return Number.isFinite(score) ? score : null;
+}
+
+function volume30DayForFilter(zone) {
+  const volume = Number(zone?.volume30Day);
+  return Number.isFinite(volume) ? volume : null;
+}
+
+function mortgageLoansForFilter(zone) {
+  const loans = Number(zone?.mortgageOriginationsCount);
+  return Number.isFinite(loans) ? loans : null;
+}
+
+function housingForFilter(zone) {
+  const houses = Number(zone?.housingUnitsEstimate);
+  return Number.isFinite(houses) ? houses : null;
+}
+
+function metricInRange(value, minValue, maxValue) {
+  if (minValue !== null && (value === null || value < minValue)) {
+    return false;
+  }
+
+  if (maxValue !== null && (value === null || value > maxValue)) {
+    return false;
+  }
+
+  return true;
 }
 
 function normalizeZoneId(value) {
@@ -240,8 +323,84 @@ function colorForZone(zone) {
   return `hsl(${hue}, 72%, 50%)`;
 }
 
-function isActiveZone(zoneId) {
+const COUNTY_FILL_COLORS = [
+  "#67e8f9",
+  "#99f6e4",
+  "#a7f3d0",
+  "#fde68a",
+  "#fed7aa",
+  "#bfdbfe",
+  "#c4b5fd",
+  "#fecdd3"
+];
+
+function hashText(value) {
+  return String(value || "")
+    .split("")
+    .reduce((hash, char) => ((hash << 5) - hash + char.charCodeAt(0)) | 0, 0);
+}
+
+function colorForCounty(feature) {
+  const props = feature?.properties || {};
+  const key = props.countyFips || `${props.state || ""}-${props.countyName || ""}`;
+  const index = Math.abs(hashText(key)) % COUNTY_FILL_COLORS.length;
+  return COUNTY_FILL_COLORS[index];
+}
+
+function isWorkZone(zoneId) {
   return state.activeZoneIds.has(zoneId);
+}
+
+function zonePassesActiveFilters(zone) {
+  if (!zone || !isWorkZone(zone.zoneId)) {
+    return false;
+  }
+
+  const query = state.filter.trim().toLowerCase();
+  if (!zoneMatchesFilter(zone, query)) {
+    return false;
+  }
+
+  const scoreMin = getNumericFilter("scoreMin");
+  const scoreMax = getNumericFilter("scoreMax");
+  if (!metricInRange(opportunityScoreForFilter(zone), scoreMin, scoreMax)) {
+    return false;
+  }
+
+  const volumeMin = getNumericFilter("volume30DayMin");
+  const volumeMax = getNumericFilter("volume30DayMax");
+  if (!metricInRange(volume30DayForFilter(zone), volumeMin, volumeMax)) {
+    return false;
+  }
+
+  const mortgageLoansMin = getNumericFilter("mortgageLoansMin");
+  if (!metricInRange(mortgageLoansForFilter(zone), mortgageLoansMin, null)) {
+    return false;
+  }
+
+  const housingMin = getNumericFilter("housingMin");
+  if (!metricInRange(housingForFilter(zone), housingMin, null)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isListedZone(zone) {
+  return zonePassesActiveFilters(zone);
+}
+
+function isMapVisibleZone(zone) {
+  if (!zone || !isWorkZone(zone.zoneId)) {
+    return false;
+  }
+
+  return state.mapShowsFilteredZones ? zonePassesActiveFilters(zone) : true;
+}
+
+function isActiveZone(zoneId) {
+  const zone = state.zoneById.get(zoneId);
+  return isMapVisibleZone(zone);
 }
 
 function shouldShowZip3Layer() {
@@ -249,7 +408,7 @@ function shouldShowZip3Layer() {
 }
 
 function shouldShowCountyLayer() {
-  return state.mapLayerMode === "counties";
+  return state.mapLayerMode === "counties" || state.mapLayerMode === "both";
 }
 
 function shouldShowCountyOutlineLayer() {
@@ -358,24 +517,41 @@ function styleForFeature(feature) {
   };
 }
 
-function styleForCountyFeature() {
+function styleForCountyFeature(feature) {
+  const isCombined = state.mapLayerMode === "both";
+
   return {
-    color: "#0f766e",
-    weight: 1.25,
-    opacity: 0.9,
-    fillColor: "#99f6e4",
-    fillOpacity: 0.2,
-    dashArray: "6,3"
+    color: isCombined ? "#042f2e" : "#0f766e",
+    weight: isCombined ? 1.05 : 1.35,
+    opacity: isCombined ? 0.72 : 0.9,
+    fillColor: colorForCounty(feature),
+    fillOpacity: isCombined ? 0.16 : 0.34,
+    dashArray: isCombined ? "8,5" : "6,3",
+    lineJoin: "round"
   };
 }
 
 function styleForCountyOutlineFeature() {
+  const isCombined = state.mapLayerMode === "both";
+
   return {
-    color: "#0f766e",
-    weight: 1.35,
-    opacity: 0.95,
+    color: isCombined ? "#111827" : "#115e59",
+    weight: isCombined ? 2.15 : 1.55,
+    opacity: isCombined ? 0.78 : 0.95,
     fillOpacity: 0,
-    dashArray: "5,4",
+    dashArray: isCombined ? "7,4" : "5,4",
+    interactive: false
+  };
+}
+
+function styleForPrimaryCountyFeature() {
+  return {
+    color: "#7c2d12",
+    weight: 4,
+    opacity: 0.98,
+    fillColor: "#facc15",
+    fillOpacity: 0.12,
+    dashArray: "2,3",
     interactive: false
   };
 }
@@ -515,12 +691,22 @@ function formatCountyPopup(feature) {
 }
 
 function refreshStyles() {
-  if (!state.zoneLayer) {
-    return;
+  if (state.countyLayer) {
+    state.countyLayer.setStyle(styleForCountyFeature);
   }
 
-  state.zoneLayer.setStyle(styleForFeature);
-  bringSelectionToFront();
+  if (state.countyOutlineLayer) {
+    state.countyOutlineLayer.setStyle(styleForCountyOutlineFeature);
+  }
+
+  if (state.primaryCountyLayer) {
+    state.primaryCountyLayer.setStyle(styleForPrimaryCountyFeature);
+  }
+
+  if (state.zoneLayer) {
+    state.zoneLayer.setStyle(styleForFeature);
+    bringSelectionToFront();
+  }
 }
 
 function setLayerVisible(layer, visible) {
@@ -559,12 +745,12 @@ function refreshLayerLegendText() {
   }
 
   if (state.mapLayerMode === "counties") {
-    legendLayerLabelEl.textContent = "County";
+    legendLayerLabelEl.textContent = "County colorido";
     return;
   }
 
   if (state.mapLayerMode === "both") {
-    legendLayerLabelEl.textContent = "ZIP3 + county";
+    legendLayerLabelEl.textContent = "ZIP3 + counties coloridos";
     return;
   }
 
@@ -572,6 +758,7 @@ function refreshLayerLegendText() {
 }
 
 function refreshLayerVisibility() {
+  refreshStyles();
   setLayerVisible(state.countyLayer, shouldShowCountyLayer());
   setLayerVisible(state.countyOutlineLayer, shouldShowCountyOutlineLayer());
   setLayerVisible(state.zoneLayer, shouldShowZip3Layer());
@@ -604,8 +791,36 @@ function bringSelectionToFront() {
   });
 }
 
+function clearPrimaryCountyHighlight() {
+  if (state.primaryCountyLayer && map.hasLayer(state.primaryCountyLayer)) {
+    map.removeLayer(state.primaryCountyLayer);
+  }
+
+  state.primaryCountyLayer = null;
+}
+
+function refreshPrimaryCountyHighlight() {
+  clearPrimaryCountyHighlight();
+
+  const zone = state.zoneById.get(state.selectedZoneId);
+  if (!zone?.primaryCountyFips) {
+    return;
+  }
+
+  const countyFeature = state.countyFeatureByFips.get(zone.primaryCountyFips);
+  if (!countyFeature) {
+    return;
+  }
+
+  state.primaryCountyLayer = L.geoJSON(countyFeature, {
+    renderer: primaryCountyRenderer,
+    interactive: false,
+    style: styleForPrimaryCountyFeature
+  }).addTo(map);
+}
+
 function getActiveZones() {
-  return state.zones.filter((zone) => isActiveZone(zone.zoneId));
+  return state.zones.filter(isListedZone);
 }
 
 function refreshModeText() {
@@ -658,6 +873,90 @@ function refreshModeText() {
   if (legendHotspotLabelEl) {
     legendHotspotLabelEl.textContent = "Hotspot populacional";
   }
+}
+
+function activeFilterDescriptions() {
+  const descriptions = [];
+
+  if (state.filter.trim()) {
+    descriptions.push(`busca "${state.filter.trim()}"`);
+  }
+
+  const scoreMin = getNumericFilter("scoreMin");
+  const scoreMax = getNumericFilter("scoreMax");
+  if (scoreMin !== null || scoreMax !== null) {
+    descriptions.push(`score ${scoreMin ?? "min"} a ${scoreMax ?? "max"}`);
+  }
+
+  const volumeMin = getNumericFilter("volume30DayMin");
+  const volumeMax = getNumericFilter("volume30DayMax");
+  if (volumeMin !== null || volumeMax !== null) {
+    descriptions.push(`volume 30d ${volumeMin ?? "min"} a ${volumeMax ?? "max"}`);
+  }
+
+  const mortgageLoansMin = getNumericFilter("mortgageLoansMin");
+  if (mortgageLoansMin !== null) {
+    descriptions.push(`mortgage loans >= ${mortgageLoansMin}`);
+  }
+
+  const housingMin = getNumericFilter("housingMin");
+  if (housingMin !== null) {
+    descriptions.push(`casas >= ${housingMin}`);
+  }
+
+  return descriptions;
+}
+
+function refreshFilterSummary() {
+  if (!filterSummaryEl) {
+    return;
+  }
+
+  const workZoneCount = state.zones.filter((zone) => isWorkZone(zone.zoneId)).length;
+  const filteredZoneCount = getActiveZones().length;
+  const descriptions = activeFilterDescriptions();
+  const mapMode = state.mapShowsFilteredZones ? "Mapa mostrando apenas filtradas" : "Mapa mostrando todas ativas";
+
+  if (descriptions.length === 0) {
+    filterSummaryEl.textContent = `${mapMode}. ${filteredZoneCount}/${workZoneCount} zonas na lista.`;
+    return;
+  }
+
+  filterSummaryEl.textContent = `${mapMode}. ${filteredZoneCount}/${workZoneCount} zonas: ${descriptions.join(" • ")}.`;
+}
+
+function refreshSelectionDetails() {
+  if (!selectionDetailsEl) {
+    return;
+  }
+
+  const zone = state.zoneById.get(state.selectedZoneId);
+  if (!zone) {
+    const filteredZoneCount = getActiveZones().length;
+    selectionDetailsEl.innerHTML = `
+      <strong>Decisao visual</strong><br/>
+      Selecione uma zona para ver o county principal, ZIP principal, score, volume e casas.<br/>
+      <span>${formatNumber(filteredZoneCount)} zonas passam nos filtros atuais.</span>
+    `;
+    return;
+  }
+
+  const volumeLabel = zone.hasZonePerformanceData ? `${formatNumber(zone.volume30Day)} vol 30d` : "Volume 30d N/D";
+  const onTimeLabel = zone.hasZonePerformanceData ? `OT ${escapeHtml(formatPercent(zone.onTimePct))}` : "OT N/D";
+  const countyLabel = primaryCountySummary(zone);
+
+  selectionDetailsEl.innerHTML = `
+    <strong>Zona escolhida: ${escapeHtml(zone.label)}</strong><br/>
+    County principal: <strong>${escapeHtml(countyLabel)}</strong><br/>
+    ZIP principal: <strong>${escapeHtml(primaryZipSummary(zone))}</strong><br/>
+    Score oportunidade: <strong>${escapeHtml(formatScore(zone.mortgageOpportunityScore))}</strong> • Mortgage: <strong>${formatNumber(zone.mortgageOriginationsCount)}</strong> loans<br/>
+    ${escapeHtml(volumeLabel)} • ${onTimeLabel} • Casas: <strong>${formatNumber(zone.housingUnitsEstimate)}</strong>
+  `;
+}
+
+function refreshDecisionPanel() {
+  refreshFilterSummary();
+  refreshSelectionDetails();
 }
 
 function refreshStats() {
@@ -807,10 +1106,12 @@ function updateSelection(zoneId) {
   state.selectedZoneId = state.selectedZoneId === zoneId ? null : zoneId;
 
   refreshStyles();
+  refreshPrimaryCountyHighlight();
   renderZoneList();
   renderZip3Labels();
   renderCityLabels();
   refreshStats();
+  refreshDecisionPanel();
 
   if (state.selectedZoneId) {
     const bounds = state.boundsByZoneId.get(state.selectedZoneId);
@@ -838,6 +1139,7 @@ function buildCountyLayers(geojson) {
     .sort((a, b) => a.state.localeCompare(b.state) || a.label.localeCompare(b.label));
 
   state.countyLayer = L.geoJSON(geojson, {
+    renderer: countyFillRenderer,
     style: styleForCountyFeature,
     onEachFeature(feature, layer) {
       layer.bindPopup(() => formatCountyPopup(feature));
@@ -845,6 +1147,7 @@ function buildCountyLayers(geojson) {
   });
 
   state.countyOutlineLayer = L.geoJSON(geojson, {
+    renderer: countyOutlineRenderer,
     interactive: false,
     style: styleForCountyOutlineFeature
   });
@@ -852,6 +1155,7 @@ function buildCountyLayers(geojson) {
 
 function buildZoneLayer(geojson) {
   state.zoneLayer = L.geoJSON(geojson, {
+    renderer: zip3Renderer,
     style: styleForFeature,
     onEachFeature(feature, layer) {
       const zoneId = feature.properties.zoneId;
@@ -887,6 +1191,14 @@ function zoneMatchesFilter(zone, query) {
   }
 
   if (zone.state.toLowerCase().includes(query) || zone.stateName.toLowerCase().includes(query)) {
+    return true;
+  }
+
+  if (String(zone.primaryCountyName || "").toLowerCase().includes(query)) {
+    return true;
+  }
+
+  if (String(zone.topZip5 || "").includes(query) || String(zone.topZipCity || "").toLowerCase().includes(query)) {
     return true;
   }
 
@@ -932,14 +1244,11 @@ function compareZoneByMode(a, b) {
 function renderZoneList() {
   zoneListEl.innerHTML = "";
 
-  const query = state.filter.trim().toLowerCase();
-  const visibleZones = state.zones
-    .filter((zone) => isActiveZone(zone.zoneId))
-    .filter((zone) => zoneMatchesFilter(zone, query))
-    .sort(compareZoneByMode);
+  const visibleZones = getActiveZones().sort(compareZoneByMode);
 
   if (visibleZones.length === 0) {
-    zoneListEl.innerHTML = `<div class="zone-item">Nenhuma zona encontrada para "${escapeHtml(query)}".</div>`;
+    const filterText = activeFilterDescriptions().join(" • ") || "os filtros atuais";
+    zoneListEl.innerHTML = `<div class="zone-item">Nenhuma zona encontrada para ${escapeHtml(filterText)}.</div>`;
     return;
   }
 
@@ -965,6 +1274,7 @@ function renderZoneList() {
           <span>${formatNumber(zone.volume30Day || 0)} vol</span>
         </div>
         <div class="zone-meta">${escapeHtml(zone.stateName)} • OT ${escapeHtml(formatPercent(zone.onTimePct))} ${hotspotTag}</div>
+        <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
         <div class="zone-cities">Rank volume: #${formatNumber(zone.volume30DayRank)} • rank estado ${formatRank(zone.volume30DayStateRank, zone.volume30DayStateZoneCount)}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
       `;
@@ -975,6 +1285,7 @@ function renderZoneList() {
           <span>${formatNumber(zone.cfpbDistressComplaintCount)} complaints</span>
         </div>
         <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.cfpbDistressScore))} • rank #${formatNumber(zone.cfpbDistressRank)} ${hotspotTag}</div>
+        <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
         <div class="zone-cities">Nao pontuais: ${formatNumber(zone.cfpbDistressUntimelyCount)} (${escapeHtml(formatPercent(zone.cfpbDistressUntimelySharePct))}) • ${escapeHtml(formatNumber(zone.cfpbDistressComplaintsPer100k))}/100k hab</div>
         <div class="zone-cities">Rank estado: ${formatRank(zone.cfpbDistressStateRank, zone.cfpbDistressStateZoneCount)} • inicio ${escapeHtml(zone.cfpbDistressDateReceivedMin || "N/D")}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
@@ -986,6 +1297,7 @@ function renderZoneList() {
           <span>${formatNumber(zone.estimatedDelinquentLoans)} delinquent</span>
         </div>
         <div class="zone-meta">${escapeHtml(zone.stateName)} • taxa ${escapeHtml(formatPercent(zone.estimatedDelinquencyRatePct))} • risco ${escapeHtml(formatScore(zone.delinquencyRiskScore))} ${hotspotTag}</div>
+        <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
         <div class="zone-cities">Volume proxy: ${escapeHtml(formatCurrency(zone.estimatedDelinquentVolume))} • rank estado ${formatRank(zone.delinquencyEstimatedStateRank, zone.delinquencyStateZoneCount)}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
       `;
@@ -996,6 +1308,7 @@ function renderZoneList() {
           <span>${formatNumber(zone.mortgageOriginationsCount)} loans</span>
         </div>
         <div class="zone-meta">${escapeHtml(zone.stateName)} • score ${escapeHtml(formatScore(zone.mortgageOpportunityScore))} • rank oportunidade #${formatNumber(zone.mortgageOpportunityRank)} ${hotspotTag}</div>
+        <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
         <div class="zone-cities">Volume estimado: ${escapeHtml(formatCurrency(zone.mortgageOriginationsAmount))} • rank estado ${formatRank(zone.mortgageStateRank, zone.mortgageStateZoneCount)}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
       `;
@@ -1006,6 +1319,7 @@ function renderZoneList() {
           <span>${formatNumber(zone.population)}</span>
         </div>
         <div class="zone-meta">${escapeHtml(zone.stateName)} • ${zone.zipCount} ZIP5 • rank estado ${formatRank(zone.statePopulationRank, zone.stateZoneCount)} • rank geral #${zone.populationRank} ${hotspotTag}</div>
+        <div class="zone-cities">County principal: ${escapeHtml(primaryCountySummary(zone))}</div>
         <div class="zone-cities">ZIP lider: ${escapeHtml(topZipSummary(zone))}</div>
         <div class="zone-cities">ZIP com mais casas: ${escapeHtml(topHousingSummary(zone))}</div>
         <div class="zone-cities">${escapeHtml(cityPreview(zone.cities, 7))}</div>
@@ -1216,10 +1530,84 @@ function attachZonePerformanceData(payload) {
   state.zonePerformanceTotals = payload.totals || null;
 }
 
+function syncFilterStateFromInputs() {
+  state.filters.scoreMin = scoreMinInput?.value || "";
+  state.filters.scoreMax = scoreMaxInput?.value || "";
+  state.filters.volume30DayMin = volume30DayMinInput?.value || "";
+  state.filters.volume30DayMax = volume30DayMaxInput?.value || "";
+  state.filters.mortgageLoansMin = mortgageLoansMinInput?.value || "";
+  state.filters.housingMin = housingMinInput?.value || "";
+  state.mapShowsFilteredZones = toggleFilteredMapInput ? toggleFilteredMapInput.checked : true;
+}
+
+function clearFilters() {
+  state.filter = "";
+  if (filterInput) {
+    filterInput.value = "";
+  }
+
+  for (const input of [
+    scoreMinInput,
+    scoreMaxInput,
+    volume30DayMinInput,
+    volume30DayMaxInput,
+    mortgageLoansMinInput,
+    housingMinInput
+  ]) {
+    if (input) {
+      input.value = "";
+    }
+  }
+
+  if (toggleFilteredMapInput) {
+    toggleFilteredMapInput.checked = true;
+  }
+
+  syncFilterStateFromInputs();
+}
+
+function applyFilterChanges() {
+  if (state.selectedZoneId && !isActiveZone(state.selectedZoneId)) {
+    state.selectedZoneId = null;
+  }
+
+  refreshStyles();
+  refreshPrimaryCountyHighlight();
+  renderZoneList();
+  renderZip3Labels();
+  renderCityLabels();
+  refreshStats();
+  refreshDecisionPanel();
+}
+
 function setupControls() {
   filterInput.addEventListener("input", (event) => {
     state.filter = event.target.value;
-    renderZoneList();
+    applyFilterChanges();
+  });
+
+  for (const input of [
+    scoreMinInput,
+    scoreMaxInput,
+    volume30DayMinInput,
+    volume30DayMaxInput,
+    mortgageLoansMinInput,
+    housingMinInput
+  ]) {
+    input?.addEventListener("input", () => {
+      syncFilterStateFromInputs();
+      applyFilterChanges();
+    });
+  }
+
+  toggleFilteredMapInput?.addEventListener("change", () => {
+    syncFilterStateFromInputs();
+    applyFilterChanges();
+  });
+
+  resetFiltersButton?.addEventListener("click", () => {
+    clearFilters();
+    applyFilterChanges();
   });
 
   modeSelect.addEventListener("change", (event) => {
@@ -1254,6 +1642,7 @@ function setupControls() {
     refreshStyles();
     renderZoneList();
     refreshStats();
+    refreshDecisionPanel();
   });
 
   layerModeSelect.addEventListener("change", (event) => {
@@ -1287,6 +1676,7 @@ function setupControls() {
     refreshStyles();
     renderZoneList();
     refreshStats();
+    refreshDecisionPanel();
   });
 }
 
@@ -1312,10 +1702,12 @@ async function loadData() {
   state.totalZoneFeatureCount = zoneGeojson.features.length;
   state.totalCountyFeatureCount = Array.isArray(countyGeojson?.features) ? countyGeojson.features.length : 0;
   state.countyByFips = new Map();
+  state.countyFeatureByFips = new Map();
   for (const feature of countyGeojson?.features || []) {
     const countyFips = feature.properties?.countyFips;
     if (countyFips) {
       state.countyByFips.set(countyFips, feature.properties);
+      state.countyFeatureByFips.set(countyFips, feature);
     }
   }
 
@@ -1354,6 +1746,7 @@ async function loadData() {
   refreshModeText();
   renderZoneList();
   refreshStats();
+  refreshDecisionPanel();
 }
 
 setupControls();
