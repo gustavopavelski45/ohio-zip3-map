@@ -4,6 +4,7 @@ Mapa interativo dos Estados Unidos por `ZIP3`, com:
 
 - cobertura dos 50 estados (fonte OpenDataDE, sem DC);
 - contorno de zona por agregacao de ZIP5;
+- camada opcional de counties para visualizar county, ZIP3 ou ambos, com cor e labels separados;
 - transparencia por zona ativa;
 - destaque automatico para zonas mais populosas;
 - rank populacional geral e rank dentro do estado;
@@ -12,6 +13,8 @@ Mapa interativo dos Estados Unidos por `ZIP3`, com:
 - modo `Mortgage Opportunity` com rank de volume de hipoteca e score de oportunidade;
 - modo `Delinquency Proxy` com estimativa de inadimplencia e rank de risco;
 - modo `Atraso (CFPB gratis)` com reclamacoes reais de dificuldade de pagamento/servicing e rank por zona;
+- modo `30 dias / OT%` com volume operacional por zona e percentual on-time, sem expor codigos de vendor;
+- popup resumido opcional com estado, zona, ZIP principal, OT%, volume e county principal;
 - cidades exibidas no mapa e busca por estado/ZIP3/cidade.
 
 ## Requisitos
@@ -53,6 +56,8 @@ Para desativar autenticacao (opcional):
 
 - `npm run prepare-mortgage-data`: gera `public/data/hmda_county_2024.json` a partir do snapshot HMDA oficial (FFIEC/CFPB)
 - `npm run prepare-cfpb-data`: gera `public/data/cfpb_mortgage_distress_12m.json` (API publica CFPB)
+- `npm run prepare-zone-performance-data -- arquivo.txt`: gera `public/data/zone_performance_30day.json` com apenas zona, volume 30 dias e OT%
+- `npm run prepare-county-data`: gera `public/data/coverage_counties.geojson`
 - `npm run prepare-data`: baixa os limites ZIP5 por estado, agrega em zonas `STATE-ZIP3` e gera:
   - `public/data/coverage_zip3.geojson`
   - `public/data/coverage_zip3_zones.json`
@@ -102,6 +107,8 @@ Edite `public/data/work_zones.json`.
 ## Fontes de dados
 
 - Limites ZIP/ZCTA: `OpenDataDE/State-zip-code-GeoJSON`
+- Counties: `plotly/datasets` (`geojson-counties-fips.json`)
 - Cidade/lat/lon/populacao por ZIP: pacote npm `zipcode-detail-lookup`
 - Mortgage originations: HMDA snapshot publico (`FFIEC/CFPB`)
 - Atraso (gratis): `CFPB Consumer Complaint Database API` (produto Mortgage)
+- Performance operacional: relatorio interno sanitizado em `zone_performance_30day.json`

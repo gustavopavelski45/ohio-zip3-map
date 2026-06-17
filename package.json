@@ -7,6 +7,8 @@
   "scripts": {
     "prepare-mortgage-data": "node scripts/build-hmda-county-data.mjs",
     "prepare-cfpb-data": "node scripts/build-cfpb-distress-data.mjs",
+    "prepare-zone-performance-data": "node scripts/build-zone-performance-data.mjs",
+    "prepare-county-data": "node scripts/build-county-data.mjs",
     "prepare-data": "node scripts/build-data.mjs",
     "start": "node server.js",
     "dev": "npm run prepare-data && npm run start"

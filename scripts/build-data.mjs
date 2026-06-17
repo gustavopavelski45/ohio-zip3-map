@@ -249,6 +249,37 @@ function parseCountyWeights(lookup) {
   return fallbackFips.map((countyFips) => [countyFips, 1]);
 }
 
+function parseCountyNameMap(lookup) {
+  const countyNameMap = new Map();
+  if (!lookup || typeof lookup !== "object") {
+    return countyNameMap;
+  }
+
+  const fipsList = String(lookup.county_fips_all || lookup.county_fips || "")
+    .split(/[;,\s]+/)
+    .map((entry) => normalizeCountyFips(entry))
+    .filter(Boolean);
+  const names = String(lookup.county_names_all || lookup.county || "")
+    .split(/[;,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  fipsList.forEach((countyFips, index) => {
+    const countyName = names[index] || names[0] || String(lookup.county || "").trim();
+    if (countyName) {
+      countyNameMap.set(countyFips, countyName);
+    }
+  });
+
+  const fallbackFips = normalizeCountyFips(lookup.county_fips);
+  const fallbackName = String(lookup.county || "").trim();
+  if (fallbackFips && fallbackName && !countyNameMap.has(fallbackFips)) {
+    countyNameMap.set(fallbackFips, fallbackName);
+  }
+
+  return countyNameMap;
+}
+
 function createZone(zoneId, state, stateName, zip3) {
   return {
     zoneId,
@@ -265,6 +296,7 @@ function createZone(zoneId, state, stateName, zip3) {
     topHousingCity: null,
     topHousingUnitsEstimate: 0,
     countyPopulationByFips: new Map(),
+    countyNameByFips: new Map(),
     latSum: 0,
     lngSum: 0,
     pointCount: 0,
@@ -295,6 +327,7 @@ function includeCountyWeights(zone, lookup, population) {
     return;
   }
 
+  const countyNameMap = parseCountyNameMap(lookup);
   const totalWeight = countyWeights.reduce((sum, [, weight]) => sum + weight, 0);
   if (!Number.isFinite(totalWeight) || totalWeight <= 0) {
     return;
@@ -308,6 +341,11 @@ function includeCountyWeights(zone, lookup, population) {
       countyFips,
       (zone.countyPopulationByFips.get(countyFips) || 0) + contribution
     );
+
+    const countyName = countyNameMap.get(countyFips);
+    if (countyName && !zone.countyNameByFips.has(countyFips)) {
+      zone.countyNameByFips.set(countyFips, countyName);
+    }
   }
 }
 
@@ -319,6 +357,32 @@ function includePoint(target, lat, lng) {
   target.latSum += lat;
   target.lngSum += lng;
   target.pointCount += 1;
+}
+
+function primaryCountyForZone(zone) {
+  let primaryCountyFips = null;
+  let primaryCountyWeight = 0;
+
+  for (const [countyFips, weight] of zone.countyPopulationByFips.entries()) {
+    if (weight > primaryCountyWeight) {
+      primaryCountyFips = countyFips;
+      primaryCountyWeight = weight;
+    }
+  }
+
+  if (!primaryCountyFips) {
+    return {
+      primaryCountyFips: null,
+      primaryCountyName: null,
+      primaryCountyWeight: 0
+    };
+  }
+
+  return {
+    primaryCountyFips,
+    primaryCountyName: zone.countyNameByFips.get(primaryCountyFips) || null,
+    primaryCountyWeight: Math.round(primaryCountyWeight)
+  };
 }
 
 function average(sum, count) {
@@ -1162,29 +1226,36 @@ async function main() {
       featureCount += 1;
     }
 
-    const stateZones = [...stateZoneMap.values()].map((zone) => ({
-      zoneId: zone.zoneId,
-      state: zone.state,
-      stateName: zone.stateName,
-      zip3: zone.zip3,
-      label: `${zone.state}-${zone.zip3}`,
-      zipCount: zone.zips.size,
-      zips: [...zone.zips].sort(),
-      cities: [...zone.cities].sort((a, b) => a.localeCompare(b)),
-      latitude: average(zone.latSum, zone.pointCount),
-      longitude: average(zone.lngSum, zone.pointCount),
-      population: zone.population,
-      populationPerZip: zone.zips.size > 0 ? Math.round(zone.population / zone.zips.size) : 0,
-      housingUnitsEstimate: zone.housingUnitsEstimate,
-      topZip5: zone.topZip5,
-      topZipCity: zone.topZipCity,
-      topZipPopulation: zone.topZipPopulation,
-      topHousingZip5: zone.topHousingZip5,
-      topHousingCity: zone.topHousingCity,
-      topHousingUnitsEstimate: zone.topHousingUnitsEstimate,
-      countyPopulationByFips: zone.countyPopulationByFips,
-      geometry: dissolveZoneGeometry(zone)
-    }));
+    const stateZones = [...stateZoneMap.values()].map((zone) => {
+      const primaryCounty = primaryCountyForZone(zone);
+
+      return {
+        zoneId: zone.zoneId,
+        state: zone.state,
+        stateName: zone.stateName,
+        zip3: zone.zip3,
+        label: `${zone.state}-${zone.zip3}`,
+        zipCount: zone.zips.size,
+        zips: [...zone.zips].sort(),
+        cities: [...zone.cities].sort((a, b) => a.localeCompare(b)),
+        latitude: average(zone.latSum, zone.pointCount),
+        longitude: average(zone.lngSum, zone.pointCount),
+        population: zone.population,
+        populationPerZip: zone.zips.size > 0 ? Math.round(zone.population / zone.zips.size) : 0,
+        housingUnitsEstimate: zone.housingUnitsEstimate,
+        topZip5: zone.topZip5,
+        topZipCity: zone.topZipCity,
+        topZipPopulation: zone.topZipPopulation,
+        topHousingZip5: zone.topHousingZip5,
+        topHousingCity: zone.topHousingCity,
+        topHousingUnitsEstimate: zone.topHousingUnitsEstimate,
+        primaryCountyFips: primaryCounty.primaryCountyFips,
+        primaryCountyName: primaryCounty.primaryCountyName,
+        primaryCountyWeight: primaryCounty.primaryCountyWeight,
+        countyPopulationByFips: zone.countyPopulationByFips,
+        geometry: dissolveZoneGeometry(zone)
+      };
+    });
 
     zones.push(...stateZones);
 
@@ -1297,6 +1368,9 @@ async function main() {
         topHousingZip5: zone.topHousingZip5,
         topHousingCity: zone.topHousingCity,
         topHousingUnitsEstimate: zone.topHousingUnitsEstimate,
+        primaryCountyFips: zone.primaryCountyFips,
+        primaryCountyName: zone.primaryCountyName,
+        primaryCountyWeight: zone.primaryCountyWeight,
         hasMortgageData: zone.hasMortgageData,
         mortgageYear: zone.mortgageYear,
         mortgageOriginationsCount: zone.mortgageOriginationsCount,
@@ -1364,6 +1438,9 @@ async function main() {
     topHousingZip5: zone.topHousingZip5,
     topHousingCity: zone.topHousingCity,
     topHousingUnitsEstimate: zone.topHousingUnitsEstimate,
+    primaryCountyFips: zone.primaryCountyFips,
+    primaryCountyName: zone.primaryCountyName,
+    primaryCountyWeight: zone.primaryCountyWeight,
     hasMortgageData: zone.hasMortgageData,
     mortgageYear: zone.mortgageYear,
     mortgageOriginationsCount: zone.mortgageOriginationsCount,

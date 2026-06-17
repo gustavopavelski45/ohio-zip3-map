@@ -226,6 +226,18 @@ h1 {
   border-color: rgba(146, 64, 14, 0.7);
 }
 
+.swatch.county {
+  background: rgba(20, 184, 166, 0.34);
+  border-color: #0f766e;
+  border-style: dashed;
+}
+
+.swatch.combined {
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.46) 0 50%, rgba(20, 184, 166, 0.34) 50% 100%);
+  border-color: #0f766e;
+}
+
 .city-label {
   color: #0f3c87;
   font-size: 11px;
@@ -249,6 +261,19 @@ h1 {
     1px -1px 0 rgba(255, 255, 255, 0.78),
     -1px 1px 0 rgba(255, 255, 255, 0.78),
     1px 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.county-label {
+  color: #7f1d1d;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  text-shadow:
+    -1px -1px 0 rgba(255, 255, 255, 0.95),
+    1px -1px 0 rgba(255, 255, 255, 0.95),
+    -1px 1px 0 rgba(255, 255, 255, 0.95),
+    1px 1px 0 rgba(255, 255, 255, 0.95),
+    0 0 5px rgba(255, 255, 255, 0.95);
 }
 
 .leaflet-popup-content {
