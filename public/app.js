@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v15";
+const DATA_VERSION = "all-us-v16";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
