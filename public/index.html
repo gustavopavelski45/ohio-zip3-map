@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Space+Mono:wght@400;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
     <link
@@ -16,124 +16,229 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
-    <link rel="stylesheet" href="./styles.css?v=all-us-v17" />
+    <link rel="stylesheet" href="./styles.css?v=all-us-v18" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="side-panel">
-        <p class="eyebrow">Ferramenta nacional de cobertura</p>
-        <div class="title-row">
-          <h1>Pavelski Zope Map</h1>
-          <button
-            id="secret-focus-toggle"
-            class="secret-focus-toggle"
-            type="button"
-            aria-label="Camada rosa"
-            aria-pressed="false"
-            title="Camada rosa"
-          ></button>
+    <div id="app-shell" class="app-shell">
+      <aside id="side-panel" class="side-panel">
+        <header class="brand-header">
+          <div class="brand-lockup">
+            <div class="brand-mark" aria-hidden="true">PZ</div>
+            <div class="brand-copy">
+              <p class="eyebrow">Geospatial intelligence</p>
+              <h1>Pavelski Zope Map</h1>
+            </div>
+          </div>
+          <div class="header-actions">
+            <button
+              id="secret-focus-toggle"
+              class="secret-focus-toggle"
+              type="button"
+              aria-label="Camada rosa"
+              aria-pressed="false"
+              title="Camada rosa"
+            ></button>
+            <button
+              id="panel-collapse-toggle"
+              class="icon-button panel-collapse-toggle"
+              type="button"
+              aria-label="Recolher painel"
+              aria-expanded="true"
+              title="Recolher painel"
+            >
+              <span aria-hidden="true">‹</span>
+            </button>
+          </div>
+        </header>
+
+        <div id="system-status" class="system-status" aria-live="polite">
+          <span class="status-signal" aria-hidden="true"></span>
+          <span class="status-copy">
+            <strong id="data-status-text">Carregando base nacional</strong>
+            <small id="data-status-date">Preparando inteligência geográfica</small>
+          </span>
+          <span class="status-code">LIVE</span>
         </div>
+
         <p class="help-text">
-          Zonas ativas vêm do arquivo <code>work_zones.json</code>. Áreas mais populosas recebem destaque automático, com rank por estado e ZIP líder por zona.
+          Explore cobertura, performance e oportunidade por ZIP3 e county em uma única visão operacional.
         </p>
         <small id="secret-focus-summary" class="secret-focus-summary" hidden></small>
 
-        <div class="controls">
-          <label for="zip3-filter">Buscar estado, ZIP3 ou cidade</label>
-          <input id="zip3-filter" type="text" placeholder="Ex: NY-100, PA, Charlotte" />
-        </div>
-
-        <div class="controls">
-          <label for="analysis-mode">Modo de analise</label>
-          <select id="analysis-mode">
-            <option value="population">Populacao</option>
-            <option value="mortgage">Mortgage Opportunity</option>
-            <option value="delinquency">Delinquency Proxy</option>
-            <option value="cfpb-delinquency">Atraso (CFPB gratis)</option>
-            <option value="zone-performance">30 dias / OT%</option>
-          </select>
-          <small id="analysis-mode-hint" class="mode-help"></small>
-        </div>
-
-        <div class="controls">
-          <label for="map-layer-mode">Camada do mapa</label>
-          <select id="map-layer-mode">
-            <option value="zip3">ZIP3</option>
-            <option value="counties">Counties</option>
-            <option value="both">ZIP3 + Counties</option>
-          </select>
-        </div>
-
-        <div class="controls">
-          <label for="popup-mode">Popup da zona</label>
-          <select id="popup-mode">
-            <option value="summary">Resumo operacional</option>
-            <option value="full">Completo</option>
-          </select>
-        </div>
-
-        <section class="filter-card" aria-label="Filtros de oportunidade">
-          <div class="filter-card-title">Filtros de oportunidade</div>
-          <div class="filter-grid two-cols">
-            <label>
-              Score min
-              <input id="score-min" type="number" inputmode="decimal" min="0" max="100" step="0.1" placeholder="Ex: 90" />
-            </label>
-            <label>
-              Score max
-              <input id="score-max" type="number" inputmode="decimal" min="0" max="100" step="0.1" placeholder="Ex: 89.9" />
-            </label>
-            <label>
-              Volume 30d min
-              <input id="volume-30day-min" type="number" inputmode="numeric" min="0" step="1" placeholder="Ex: 500" />
-            </label>
-            <label>
-              Volume 30d max
-              <input id="volume-30day-max" type="number" inputmode="numeric" min="0" step="1" placeholder="Ex: 1200" />
-            </label>
-            <label>
-              Mortgage loans min
-              <input id="mortgage-loans-min" type="number" inputmode="numeric" min="0" step="1" placeholder="Ex: 5000" />
-            </label>
-            <label>
-              Casas min
-              <input id="housing-min" type="number" inputmode="numeric" min="0" step="1" placeholder="Ex: 100000" />
-            </label>
+        <div class="controls search-control">
+          <label for="zip3-filter">Localizar mercado</label>
+          <div class="input-shell">
+            <span class="search-glyph" aria-hidden="true"></span>
+            <input id="zip3-filter" type="text" placeholder="Estado, ZIP3 ou cidade" autocomplete="off" />
+            <kbd>⌘ K</kbd>
           </div>
-          <label class="filter-toggle">
-            <input id="toggle-filtered-map" type="checkbox" checked />
-            Mostrar no mapa so zonas filtradas
-          </label>
-          <button id="reset-filters" class="secondary-button" type="button">Limpar filtros</button>
-          <small id="filter-summary" class="mode-help"></small>
+        </div>
+
+        <section class="control-section" aria-labelledby="perspective-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">Configuração</span>
+              <h2 id="perspective-title">Perspectiva do mapa</h2>
+            </div>
+            <span class="section-index">01</span>
+          </div>
+
+          <div class="controls">
+            <label for="analysis-mode">Modo de análise</label>
+            <select id="analysis-mode">
+              <option value="population">População</option>
+              <option value="mortgage">Mortgage Opportunity</option>
+              <option value="delinquency">Delinquency Proxy</option>
+              <option value="cfpb-delinquency">Atraso (CFPB grátis)</option>
+              <option value="zone-performance">30 dias / OT%</option>
+            </select>
+            <small id="analysis-mode-hint" class="mode-help"></small>
+          </div>
+
+          <div class="control-grid">
+            <div class="controls">
+              <label for="map-layer-mode">Camada geográfica</label>
+              <select id="map-layer-mode">
+                <option value="zip3">ZIP3</option>
+                <option value="counties">Counties</option>
+                <option value="both">ZIP3 + Counties</option>
+              </select>
+            </div>
+
+            <div class="controls">
+              <label for="popup-mode">Detalhe do popup</label>
+              <select id="popup-mode">
+                <option value="summary">Operacional</option>
+                <option value="full">Completo</option>
+              </select>
+            </div>
+          </div>
         </section>
 
-        <div class="switches">
-          <label>
-            <input id="toggle-cities" type="checkbox" checked />
-            Mostrar cidades
-          </label>
-          <label>
-            <input id="toggle-zip3-labels" type="checkbox" checked />
-            Mostrar rótulos ZIP3
-          </label>
-          <label>
-            <input id="toggle-county-labels" type="checkbox" checked />
-            Mostrar nomes counties
-          </label>
-          <label>
-            <input id="toggle-hotspots" type="checkbox" checked />
-            Destacar hotspots do modo atual
-          </label>
-        </div>
+        <details class="filter-card">
+          <summary>
+            <span>
+              <span class="section-kicker">Refinamento</span>
+              <strong>Filtros avançados</strong>
+            </span>
+            <span class="summary-meta">
+              <span id="filter-active-count" class="filter-count">0 ativos</span>
+              <span class="summary-chevron" aria-hidden="true"></span>
+            </span>
+          </summary>
+          <div class="filter-card-body">
+            <div class="filter-grid two-cols">
+              <label>
+                Score mínimo
+                <input id="score-min" type="number" inputmode="decimal" min="0" max="100" step="0.1" placeholder="90" />
+              </label>
+              <label>
+                Score máximo
+                <input id="score-max" type="number" inputmode="decimal" min="0" max="100" step="0.1" placeholder="100" />
+              </label>
+              <label>
+                Volume 30d mínimo
+                <input id="volume-30day-min" type="number" inputmode="numeric" min="0" step="1" placeholder="500" />
+              </label>
+              <label>
+                Volume 30d máximo
+                <input id="volume-30day-max" type="number" inputmode="numeric" min="0" step="1" placeholder="1200" />
+              </label>
+              <label>
+                Mortgage loans
+                <input id="mortgage-loans-min" type="number" inputmode="numeric" min="0" step="1" placeholder="5000" />
+              </label>
+              <label>
+                Casas mínimas
+                <input id="housing-min" type="number" inputmode="numeric" min="0" step="1" placeholder="100000" />
+              </label>
+            </div>
+            <div class="filter-actions">
+              <label class="filter-toggle">
+                <input id="toggle-filtered-map" type="checkbox" checked />
+                <span>Somente filtradas no mapa</span>
+              </label>
+              <button id="reset-filters" class="secondary-button" type="button">Limpar</button>
+            </div>
+            <small id="filter-summary" class="mode-help"></small>
+          </div>
+        </details>
 
-        <div id="stats" class="stats" aria-live="polite"></div>
-        <div id="selection-details" class="selection-details" aria-live="polite"></div>
-        <div id="zone-list" class="zone-list" aria-label="Lista de zonas ZIP3"></div>
+        <section class="view-section" aria-labelledby="view-title">
+          <div class="section-heading compact">
+            <div>
+              <span class="section-kicker">Camadas auxiliares</span>
+              <h2 id="view-title">Visualização</h2>
+            </div>
+            <span class="section-index">02</span>
+          </div>
+          <div class="switches">
+            <label>
+              <span>Cidades</span>
+              <input id="toggle-cities" type="checkbox" checked />
+            </label>
+            <label>
+              <span>Rótulos ZIP3</span>
+              <input id="toggle-zip3-labels" type="checkbox" checked />
+            </label>
+            <label>
+              <span>Nomes counties</span>
+              <input id="toggle-county-labels" type="checkbox" checked />
+            </label>
+            <label>
+              <span>Hotspots</span>
+              <input id="toggle-hotspots" type="checkbox" checked />
+            </label>
+          </div>
+        </section>
+
+        <section class="insight-section" aria-labelledby="insight-title">
+          <div class="section-heading compact">
+            <div>
+              <span class="section-kicker">Leitura rápida</span>
+              <h2 id="insight-title">Inteligência ativa</h2>
+            </div>
+            <span class="section-index">03</span>
+          </div>
+          <div id="stats" class="stats" aria-live="polite"></div>
+          <div id="selection-details" class="selection-details" aria-live="polite"></div>
+        </section>
+
+        <section class="results-section" aria-labelledby="results-title">
+          <div class="results-heading">
+            <div>
+              <span class="section-kicker">Ranking do modo atual</span>
+              <h2 id="results-title">Zonas encontradas</h2>
+            </div>
+            <span id="zone-result-count" class="result-count">0</span>
+          </div>
+          <div id="zone-list" class="zone-list" aria-label="Lista de zonas ZIP3"></div>
+        </section>
       </aside>
 
       <main class="map-area">
         <div id="map"></div>
+        <div class="map-command-bar" aria-label="Contexto atual do mapa">
+          <button
+            id="panel-reopen"
+            class="panel-reopen"
+            type="button"
+            aria-label="Abrir painel"
+            title="Abrir painel"
+          >
+            <span aria-hidden="true">›</span>
+          </button>
+          <div class="command-context">
+            <span class="command-label">Análise</span>
+            <strong id="map-context-mode">População</strong>
+          </div>
+          <span class="command-divider" aria-hidden="true"></span>
+          <div class="command-context">
+            <span class="command-label">Camada</span>
+            <strong id="map-context-layer">ZIP3</strong>
+          </div>
+          <span class="map-live"><span></span>Dados ativos</span>
+        </div>
         <div class="legend">
           <span class="swatch"></span>
           <span id="legend-layer-label">Zona ZIP3 ativa</span>
@@ -148,6 +253,6 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script type="module" src="./app.js?v=all-us-v17"></script>
+    <script type="module" src="./app.js?v=all-us-v18"></script>
   </body>
 </html>

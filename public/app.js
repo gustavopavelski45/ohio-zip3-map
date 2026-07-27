@@ -3,7 +3,7 @@ const map = L.map("map", {
   preferCanvas: true
 });
 
-const DATA_VERSION = "all-us-v17";
+const DATA_VERSION = "all-us-v18";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -36,6 +36,8 @@ const primaryCountyRenderer = L.canvas({ pane: "primary-county-pane", padding: 0
 map.setView([40.2, -79.2], 6);
 map.on("zoomend moveend", () => {
   renderCountyLabels();
+  renderZip3Labels();
+  renderCityLabels();
 });
 
 const zip3LayerGroup = L.layerGroup().addTo(map);
@@ -48,8 +50,10 @@ const state = {
   hasMortgageData: false,
   hasCfpbDistressData: false,
   hasZonePerformanceData: false,
+  dataReady: false,
   mortgageYear: null,
   zonePerformanceTotals: null,
+  zonePerformanceSource: null,
   zones: [],
   cities: [],
   states: [],
@@ -116,6 +120,30 @@ const selectionDetailsEl = document.querySelector("#selection-details");
 const legendLayerSwatchEl = document.querySelector(".legend .swatch:not(.hotspot)");
 const legendLayerLabelEl = document.querySelector("#legend-layer-label");
 const legendHotspotLabelEl = document.querySelector("#legend-hotspot-label");
+const appShellEl = document.querySelector("#app-shell");
+const panelCollapseToggleButton = document.querySelector("#panel-collapse-toggle");
+const panelReopenButton = document.querySelector("#panel-reopen");
+const systemStatusEl = document.querySelector("#system-status");
+const dataStatusTextEl = document.querySelector("#data-status-text");
+const dataStatusDateEl = document.querySelector("#data-status-date");
+const mapContextModeEl = document.querySelector("#map-context-mode");
+const mapContextLayerEl = document.querySelector("#map-context-layer");
+const filterActiveCountEl = document.querySelector("#filter-active-count");
+const zoneResultCountEl = document.querySelector("#zone-result-count");
+
+const MODE_LABELS = {
+  population: "População",
+  mortgage: "Mortgage Opportunity",
+  delinquency: "Delinquency Proxy",
+  "cfpb-delinquency": "Atraso CFPB",
+  "zone-performance": "30 dias / OT%"
+};
+
+const LAYER_LABELS = {
+  zip3: "ZIP3",
+  counties: "Counties",
+  both: "ZIP3 + Counties"
+};
 
 function escapeHtml(text) {
   return String(text)
@@ -174,6 +202,73 @@ function formatPercent(value) {
   }
 
   return `${numericValue.toFixed(2)}%`;
+}
+
+function formatDataStatusDate() {
+  const generatedAt = state.zonePerformanceSource?.generatedAt;
+  if (!generatedAt) {
+    return "Cobertura nacional ZIP3 + counties";
+  }
+
+  const date = new Date(generatedAt);
+  if (Number.isNaN(date.getTime())) {
+    return "Cobertura nacional ZIP3 + counties";
+  }
+
+  const formattedDate = new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
+  }).format(date);
+
+  return `Produção atualizada em ${formattedDate}`;
+}
+
+function refreshInterfaceStatus() {
+  if (mapContextModeEl) {
+    mapContextModeEl.textContent = MODE_LABELS[state.mode] || MODE_LABELS.population;
+  }
+
+  if (mapContextLayerEl) {
+    mapContextLayerEl.textContent = LAYER_LABELS[state.mapLayerMode] || LAYER_LABELS.zip3;
+  }
+
+  const activeFilters = activeFilterDescriptions().length;
+  if (filterActiveCountEl) {
+    filterActiveCountEl.textContent = `${activeFilters} ${activeFilters === 1 ? "ativo" : "ativos"}`;
+    filterActiveCountEl.classList.toggle("active", activeFilters > 0);
+  }
+
+  if (zoneResultCountEl) {
+    zoneResultCountEl.textContent = formatNumber(getActiveZones().length);
+  }
+
+  if (systemStatusEl) {
+    systemStatusEl.classList.toggle("ready", state.dataReady);
+  }
+
+  if (dataStatusTextEl) {
+    dataStatusTextEl.textContent = state.dataReady
+      ? `Base operacional • ${formatNumber(state.zones.length)} zonas`
+      : "Carregando base nacional";
+  }
+
+  if (dataStatusDateEl) {
+    dataStatusDateEl.textContent = formatDataStatusDate();
+  }
+}
+
+function setPanelCollapsed(collapsed) {
+  if (!appShellEl) {
+    return;
+  }
+
+  appShellEl.classList.toggle("panel-collapsed", collapsed);
+  panelCollapseToggleButton?.setAttribute("aria-expanded", String(!collapsed));
+
+  window.setTimeout(() => {
+    map.invalidateSize();
+  }, 280);
 }
 
 function parseFilterNumber(value) {
@@ -842,6 +937,8 @@ function bringLayerToFront(layer) {
 }
 
 function refreshLayerLegendText() {
+  refreshInterfaceStatus();
+
   if (!legendLayerLabelEl) {
     return;
   }
@@ -935,6 +1032,8 @@ function getActiveZones() {
 }
 
 function refreshModeText() {
+  refreshInterfaceStatus();
+
   if (!modeHintEl) {
     return;
   }
@@ -1027,6 +1126,8 @@ function refreshFilterSummary() {
   const filteredZoneCount = getActiveZones().length;
   const descriptions = activeFilterDescriptions();
   const mapMode = state.mapShowsFilteredZones ? "Mapa mostrando apenas filtradas" : "Mapa mostrando todas ativas";
+
+  refreshInterfaceStatus();
 
   if (descriptions.length === 0) {
     filterSummaryEl.textContent = `${mapMode}. ${filteredZoneCount}/${workZoneCount} zonas na lista.`;
@@ -1390,6 +1491,9 @@ function renderZoneList() {
   zoneListEl.innerHTML = "";
 
   const visibleZones = getActiveZones().sort(compareZoneByMode);
+  if (zoneResultCountEl) {
+    zoneResultCountEl.textContent = formatNumber(visibleZones.length);
+  }
 
   if (visibleZones.length === 0) {
     const filterText = activeFilterDescriptions().join(" • ") || "os filtros atuais";
@@ -1501,15 +1605,21 @@ function renderZip3Labels() {
     return;
   }
 
+  const zoom = map.getZoom();
+  const visibleBounds = map.getBounds();
+  const maxLabels = zoom <= 4 ? 44 : zoom === 5 ? 130 : 260;
   const zoneList = state.zones
     .filter((zone) => isActiveZone(zone.zoneId))
-    .filter((zone) => (state.selectedZoneId ? zone.zoneId === state.selectedZoneId : true));
+    .filter((zone) => (state.selectedZoneId ? zone.zoneId === state.selectedZoneId : true))
+    .filter((zone) =>
+      Number.isFinite(zone.latitude) &&
+      Number.isFinite(zone.longitude) &&
+      visibleBounds.contains([zone.latitude, zone.longitude])
+    )
+    .sort(compareZoneByMode)
+    .slice(0, state.selectedZoneId ? 1 : maxLabels);
 
   for (const zone of zoneList) {
-    if (!Number.isFinite(zone.latitude) || !Number.isFinite(zone.longitude)) {
-      continue;
-    }
-
     const marker = L.marker([zone.latitude, zone.longitude], {
       interactive: false,
       icon: L.divIcon({
@@ -1564,6 +1674,10 @@ function renderCityLabels() {
   }
 
   const selectedZoneId = state.selectedZoneId;
+  const zoom = map.getZoom();
+  if (!selectedZoneId && zoom < 5) {
+    return;
+  }
 
   const filtered = state.cities.filter((city) => {
     const inActiveWorkArea = city.zoneIds.some((zoneId) => isActiveZone(zoneId));
@@ -1572,13 +1686,13 @@ function renderCityLabels() {
     }
 
     if (!selectedZoneId) {
-      return true;
+      return map.getBounds().contains([city.latitude, city.longitude]);
     }
 
     return city.zoneIds.includes(selectedZoneId);
   });
 
-  const maxLabels = selectedZoneId ? 260 : 180;
+  const maxLabels = selectedZoneId ? 260 : zoom === 5 ? 80 : 180;
 
   for (const city of filtered.slice(0, maxLabels)) {
     if (!Number.isFinite(city.latitude) || !Number.isFinite(city.longitude)) {
@@ -1689,6 +1803,7 @@ function attachZonePerformanceData(payload) {
 
   state.hasZonePerformanceData = state.zones.some((zone) => zone.hasZonePerformanceData);
   state.zonePerformanceTotals = payload.totals || null;
+  state.zonePerformanceSource = payload.source || null;
 }
 
 function attachSecretFocusData(payload) {
@@ -1820,6 +1935,27 @@ function applyFilterChanges() {
 }
 
 function setupControls() {
+  panelCollapseToggleButton?.addEventListener("click", () => {
+    setPanelCollapsed(true);
+  });
+
+  panelReopenButton?.addEventListener("click", () => {
+    setPanelCollapsed(false);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      filterInput?.focus();
+    }
+
+    if (event.key === "Escape" && document.activeElement === filterInput && filterInput.value) {
+      filterInput.value = "";
+      state.filter = "";
+      applyFilterChanges();
+    }
+  });
+
   filterInput.addEventListener("input", (event) => {
     state.filter = event.target.value;
     applyFilterChanges();
@@ -1995,6 +2131,7 @@ async function loadData() {
   }
 
   buildZoneLayer(zoneGeojson);
+  state.dataReady = true;
   refreshLayerVisibility();
   refreshModeText();
   renderZoneList();
@@ -2007,5 +2144,7 @@ setupControls();
 
 loadData().catch((error) => {
   console.error(error);
+  state.dataReady = false;
+  refreshInterfaceStatus();
   statsEl.textContent = "Erro ao carregar dados. Rode 'npm run prepare-data' e recarregue a pagina.";
 });
