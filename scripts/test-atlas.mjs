@@ -8,6 +8,7 @@ import {
   overlaps,
   weightedOnTime,
   zoneVolumeLabel,
+  zoneOnTimeLabel,
   productionPeriodLabel,
 } from "../public/atlas-utils.js";
 
@@ -22,6 +23,15 @@ test("map volume labels distinguish a real zero from absent data", () => {
   assert.equal(zoneVolumeLabel({ hasZonePerformanceData: true, volume30Day: 0 }), "0");
   assert.equal(zoneVolumeLabel({ hasZonePerformanceData: false, volume30Day: 0 }), "N/D");
   assert.equal(zoneVolumeLabel({ hasZonePerformanceData: true, volume30Day: null }), "N/D");
+});
+
+test("map on-time comes from operational data, not opportunity score", () => {
+  const zone = { hasZonePerformanceData: true, onTimePct: 83, hasMortgageData: true, mortgageOpportunityScore: 86.03 };
+  assert.equal(zoneOnTimeLabel(zone), "83.0%");
+  assert.equal(zoneOnTimeLabel({ hasZonePerformanceData: true, onTimePct: 0 }), "0.0%");
+  assert.equal(zoneOnTimeLabel({ hasZonePerformanceData: true, onTimePct: null }), "N/D");
+  assert.equal(zoneOnTimeLabel({ hasZonePerformanceData: false, onTimePct: 99 }), "N/D");
+  assert.equal(zoneOnTimeLabel({ hasZonePerformanceData: true, onTimePct: 101 }), "N/D");
 });
 
 test("production date reflects the report window, not the import date or local timezone", () => {

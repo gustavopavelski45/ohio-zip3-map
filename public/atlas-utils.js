@@ -116,6 +116,16 @@ export function zoneVolumeLabel(zone) {
   return new Intl.NumberFormat("en-US").format(Math.round(zone.volume30Day));
 }
 
+export function zoneOnTimeLabel(zone) {
+  const raw = zone.onTimePct;
+  const value = Number(raw);
+  if (
+    !zone.hasZonePerformanceData || raw == null || raw === "" ||
+    !Number.isFinite(value) || value < 0 || value > 100
+  ) return "N/D";
+  return `${value.toFixed(1)}%`;
+}
+
 export function productionPeriodLabel(source) {
   const parseDate = (value) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return null;

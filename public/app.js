@@ -4,8 +4,9 @@ import {
   overlaps,
   weightedOnTime,
   zoneVolumeLabel,
+  zoneOnTimeLabel,
   productionPeriodLabel,
-} from "./atlas-utils.js?v=all-us-v22";
+} from "./atlas-utils.js?v=all-us-v23";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -14,7 +15,7 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v22";
+const DATA_VERSION = "all-us-v23";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -1336,17 +1337,21 @@ function renderZip3Labels() {
       .subtract(map.latLngToContainerPoint(bounds.getSouthWest()));
     if (Math.abs(size.x) < 35 || Math.abs(size.y) < 20) continue;
     const volume = zoneVolumeLabel(zone);
-    const width = state.showZoneVolume ? 100 + volume.length * 8 : 58;
-    if (!reserveLabel(point, width, 28)) continue;
+    const onTime = zoneOnTimeLabel(zone);
+    const width = state.showZoneVolume
+      ? 98 + Math.max(volume.length, onTime.length) * 7
+      : 58;
+    const height = state.showZoneVolume ? 38 : 28;
+    if (!reserveLabel(point, width, height)) continue;
     zip3LayerGroup.addLayer(
       L.marker([point.latitude, point.longitude], {
         interactive: false,
         keyboard: false,
         icon: L.divIcon({
           className: `zip3-label${state.showZoneVolume ? " with-volume" : ""}${zone.zoneId === state.selectedZoneId ? " selected" : ""}${state.secretFocusEnabled ? (isSecretFocusZone(zone.zoneId) ? " covered" : " neighbor") : ""}`,
-          html: `<span class="zip3-code">Z${escapeHtml(zone.zip3)}</span>${state.showZoneVolume ? ` <span class="zip3-volume" aria-label="Volume total de 30 dias: ${volume}">${volume} <small>vol</small></span>` : ""}`,
-          iconSize: [width, 28],
-          iconAnchor: [width / 2, 14],
+          html: `<span class="zip3-code">Z${escapeHtml(zone.zip3)}</span>${state.showZoneVolume ? ` <span class="zip3-metrics"><span class="zip3-volume" aria-label="Volume total de 30 dias: ${volume}"><small>Vol</small> ${volume}</span><span class="zip3-on-time" aria-label="On-time de 30 dias: ${onTime}"><small>OT</small> ${onTime}</span></span>` : ""}`,
+          iconSize: [width, height],
+          iconAnchor: [width / 2, height / 2],
         }),
       }),
     );
@@ -1463,7 +1468,7 @@ function renderLabels() {
   if (!state.dataReady) return;
   const mapRect = map.getContainer().getBoundingClientRect();
   labelBoxes = [...document.querySelectorAll(
-    ".map-toolbar, #coverage-toolbar, #toggle-zone-volume, .map-reset, .map-bottom, .leaflet-control-zoom",
+    ".map-controls, .map-reset, .map-bottom, .leaflet-control-zoom",
   )].filter((el) => el.getClientRects().length).map((el) => {
     const rect = el.getBoundingClientRect();
     return {

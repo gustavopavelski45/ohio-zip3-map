@@ -21,7 +21,7 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
-    <link rel="stylesheet" href="./styles.css?v=all-us-v22" />
+    <link rel="stylesheet" href="./styles.css?v=all-us-v23" />
   </head>
   <body>
     <div id="app-shell" class="app-shell">
@@ -279,33 +279,52 @@
           id="map"
           aria-label="Mapa. Use as setas para navegar e os controles para ampliar."
         ></div>
-        <div class="map-toolbar">
-          <button
-            id="panel-reopen"
-            class="map-button"
-            type="button"
-            aria-label="Abrir painel"
-            aria-controls="side-panel"
-            aria-expanded="false"
-          >
-            <span aria-hidden="true">☰</span> Explorar
-          </button>
-          <div class="map-title">
-            <span class="atlas-label"
-              >ATLAS / <strong id="map-state-title">OHIO</strong></span
-            ><span class="map-subtitle" id="map-context-layer">Zonas ZIP3</span>
-          </div>
-        </div>
-        <div id="coverage-toolbar" class="coverage-toolbar" hidden>
-          <div class="coverage-heading">
-            <span class="coverage-dot" aria-hidden="true"></span
-            ><strong id="coverage-count" aria-live="polite">Suas áreas</strong>
-          </div>
-          <div class="coverage-actions">
-            <button id="coverage-only" type="button" aria-pressed="false">
-              Só minhas áreas
+        <div class="map-controls">
+          <div class="map-toolbar">
+            <button
+              id="panel-reopen"
+              class="map-button"
+              type="button"
+              aria-label="Abrir painel"
+              aria-controls="side-panel"
+              aria-expanded="false"
+            >
+              <span aria-hidden="true">☰</span> Explorar
             </button>
-            <button id="coverage-fit" type="button">Enquadrar ↗</button>
+            <div class="map-title">
+              <span class="atlas-label"
+                >ATLAS / <strong id="map-state-title">OHIO</strong></span
+              ><span class="map-subtitle" id="map-context-layer">Zonas ZIP3</span>
+            </div>
+          </div>
+          <div class="map-metrics-controls">
+            <button
+              id="toggle-zone-volume"
+              class="map-button map-volume-toggle"
+              type="button"
+              aria-pressed="false"
+              aria-controls="map"
+              title="Mostrar ou ocultar volume de 30 dias e on-time em todas as zonas visíveis"
+            >
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+              Volume e on-time
+              <span class="metrics-switch" aria-hidden="true"></span>
+            </button>
+            <span class="map-metrics-help">Todas as zonas · Dados de 30 dias</span>
+          </div>
+          <div id="coverage-toolbar" class="coverage-toolbar" hidden>
+            <div class="coverage-heading">
+              <span class="coverage-dot" aria-hidden="true"></span
+              ><strong id="coverage-count" aria-live="polite">Suas áreas</strong>
+            </div>
+            <div class="coverage-actions">
+              <button id="coverage-only" type="button" aria-pressed="false">
+                Só minhas áreas
+              </button>
+              <button id="coverage-fit" type="button">Enquadrar ↗</button>
+            </div>
           </div>
         </div>
         <button
@@ -341,20 +360,6 @@
           </div>
           <span class="map-instruction">Clique em uma zona para explorar</span>
         </div>
-        <button
-          id="toggle-zone-volume"
-          class="map-button map-volume-toggle"
-          type="button"
-          aria-pressed="false"
-          aria-controls="map"
-          title="Mostrar o volume total de 30 dias ao lado do código de cada zona"
-        >
-          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-          </svg>
-          Volume no mapa
-          <span class="volume-period">30d</span>
-        </button>
         <div id="map-loading" class="map-loading" role="status">
           <span class="loading-ring"></span
           ><strong>Desenhando territórios</strong
@@ -367,6 +372,6 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script type="module" src="./app.js?v=all-us-v22"></script>
+    <script type="module" src="./app.js?v=all-us-v23"></script>
   </body>
 </html>
