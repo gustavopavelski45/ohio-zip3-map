@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Pavelski Zope Map: interactive US ZIP3 coverage map with state ranking and population hotspots",
   "scripts": {
+    "test": "node --test scripts/test-atlas.mjs",
     "prepare-mortgage-data": "node scripts/build-hmda-county-data.mjs",
     "prepare-cfpb-data": "node scripts/build-cfpb-distress-data.mjs",
     "prepare-zone-performance-data": "node scripts/build-zone-performance-data.mjs",
