@@ -721,7 +721,9 @@ h2 {
   pointer-events: auto;
   max-width: 100%;
 }
-.map-popup-open .map-controls {
+.map-popup-open .map-controls,
+.map-popup-open .map-reset,
+.map-popup-open .leaflet-control-zoom {
   visibility: hidden;
 }
 .map-toolbar {
