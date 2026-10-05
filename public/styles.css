@@ -1115,6 +1115,7 @@ h2 {
 }
 .vendor-table tbody th {
   font-weight: 500;
+  font-family: "DM Mono", monospace;
 }
 .vendor-table td {
   font-family: "DM Mono", monospace;

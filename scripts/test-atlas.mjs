@@ -134,7 +134,9 @@ test("operational data and pink coverage share a reporting window and contain on
     assert(Array.isArray(z.topVendors) && z.topVendors.length <= 3);
     assert(sum(z.topVendors) <= z.volume30Day);
     z.topVendors.forEach((v, index) => {
-      assert.deepEqual(Object.keys(v).sort(), ["onTimePct", "rank", "volume30Day"]);
+      assert.deepEqual(Object.keys(v).sort(), ["onTimePct", "rank", "vendorCode", "volume30Day"]);
+      assert.equal(typeof v.vendorCode, "string");
+      assert(v.vendorCode.trim().length > 0);
       assert.equal(v.rank, index + 1);
       assert(v.volume30Day > 0);
       assert(v.onTimePct == null || (v.onTimePct >= 0 && v.onTimePct <= 100));
@@ -154,7 +156,7 @@ test("operational data and pink coverage share a reporting window and contain on
   }
 });
 
-test("top vendors use 30-day volume, anonymous ranks, and zone boundaries", () => {
+test("top vendors use 30-day volume, source vendor codes, and zone boundaries", () => {
   const row = (A, B, C, D = 100) => ({ row: 1, cells: { A, B, C, D } });
   const rows = [
     row("Estado / Zona / Vendor", "30 Day Vol", "OT% 30d"),
@@ -170,13 +172,13 @@ test("top vendors use 30-day volume, anonymous ranks, and zone boundaries", () =
   const result = parseVendorRankings(rows);
   assert.equal(result.size, 3);
   assert.deepEqual(result.get("OH-431").topVendors, [
-    { rank: 1, volume30Day: 100, onTimePct: 70 },
-    { rank: 2, volume30Day: 50, onTimePct: 80 },
-    { rank: 3, volume30Day: 50, onTimePct: 0 },
+    { rank: 1, vendorCode: "EXAMPLE-A", volume30Day: 100, onTimePct: 70 },
+    { rank: 2, vendorCode: "EXAMPLE-B", volume30Day: 50, onTimePct: 80 },
+    { rank: 3, vendorCode: "XX", volume30Day: 50, onTimePct: 0 },
   ]);
-  assert.deepEqual(result.get("NJ-070").topVendors, [{ rank: 1, volume30Day: 2, onTimePct: null }]);
+  assert.deepEqual(result.get("NJ-070").topVendors, [{ rank: 1, vendorCode: "EXAMPLE-NEW", volume30Day: 2, onTimePct: null }]);
   assert.deepEqual(result.get("NJ-071").topVendors, []);
-  assert(!JSON.stringify([...result]).includes("EXAMPLE"));
+  assert(!JSON.stringify([...result]).includes("(novo)"));
   assert.throws(() => parseVendorRankings(rows.map((r, i) => i === 2 ? row("  OH Z431", 999, 80) : r)), /Vendor total mismatch/);
   assert.throws(() => parseVendorRankings(rows.map((r, i) => i === 4 ? row("      EXAMPLE-A  (novo)", 50, 80) : r)), /Duplicate vendor/);
 });

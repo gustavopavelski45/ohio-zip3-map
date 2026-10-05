@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Read values only. Vendor identifiers never leave the importer in public output.
+// Read the 30-day values and vendor codes used in zone details.
 const READ_XLSX = String.raw`
 import json, posixpath, sys, zipfile
 from xml.etree import ElementTree as ET
@@ -81,7 +81,7 @@ export function parseVendorRankings(rows) {
     const identifier = label.replace(/\s+\(novo\)$/i, "");
     assert(!group.identifiers.has(identifier), `Duplicate vendor at row ${row}`);
     group.identifiers.add(identifier);
-    group.vendors.push(metrics(cells, row));
+    group.vendors.push({ vendorCode: identifier, ...metrics(cells, row) });
   }
   return new Map([...groups].map(([zoneId, entry]) => {
     assert.equal(entry.vendors.reduce((sum, v) => sum + v.volume30Day, 0), entry.volume30Day, `Vendor total mismatch: ${zoneId}`);
@@ -117,7 +117,7 @@ async function main() {
   }
   performance.source.vendorRanking = "volume30Day descending; onTimePct descending on ties";
   await fs.writeFile(dataPath, JSON.stringify(performance) + "\n");
-  console.log(`Updated anonymous vendor rankings for ${rankings.size} zones.`);
+  console.log(`Updated vendor rankings for ${rankings.size} zones.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

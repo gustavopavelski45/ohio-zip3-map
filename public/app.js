@@ -6,7 +6,7 @@ import {
   zoneVolumeLabel,
   zoneOnTimeLabel,
   productionPeriodLabel,
-} from "./atlas-utils.js?v=all-us-v25";
+} from "./atlas-utils.js?v=all-us-v26";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -15,7 +15,7 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v25";
+const DATA_VERSION = "all-us-v26";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -737,8 +737,8 @@ function topVendorsSummaryBlock(zone) {
     <div class="popup-vendors-heading"><strong>Top 3 vendors</strong><span>Por volume · 30 dias</span></div>
     ${vendors?.length ? `<table class="vendor-table">
       <thead><tr><th scope="col">Vendor</th><th scope="col">Volume</th><th scope="col">On-time</th></tr></thead>
-      <tbody>${vendors.map((v) => `<tr><th scope="row">Vendor ${formatNumber(v.rank)}</th><td>${formatNumber(v.volume30Day)}</td><td>${formatPercent(v.onTimePct)}</td></tr>`).join("")}</tbody>
-    </table><p class="vendor-note">Identidades ocultas. OT% do relatório.</p>` : `<p class="vendor-note">${message}</p>`}
+      <tbody>${vendors.map((v) => `<tr><th scope="row">${escapeHtml(v.vendorCode || `Vendor ${formatNumber(v.rank)}`)}</th><td>${formatNumber(v.volume30Day)}</td><td>${formatPercent(v.onTimePct)}</td></tr>`).join("")}</tbody>
+    </table><p class="vendor-note">OT% do relatório · 30 dias.</p>` : `<p class="vendor-note">${message}</p>`}
   </section>`;
 }
 
