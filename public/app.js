@@ -6,7 +6,7 @@ import {
   zoneVolumeLabel,
   zoneOnTimeLabel,
   productionPeriodLabel,
-} from "./atlas-utils.js?v=all-us-v23";
+} from "./atlas-utils.js?v=all-us-v24";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -15,7 +15,7 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v23";
+const DATA_VERSION = "all-us-v24";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -728,11 +728,26 @@ function secretFocusSummaryBlock(zone) {
   return `Camada rosa: <strong>${escapeHtml(secretFocusMetricSummary(zone.zoneId))}</strong><br/>`;
 }
 
+function topVendorsSummaryBlock(zone) {
+  const vendors = zone.topVendors;
+  const message = !Array.isArray(vendors)
+    ? "Ranking indisponível para este período."
+    : "Nenhum vendor com produção neste período.";
+  return `<section class="popup-vendors" aria-label="Top 3 vendors da zona">
+    <div class="popup-vendors-heading"><strong>Top 3 vendors</strong><span>Por volume · 30 dias</span></div>
+    ${vendors?.length ? `<table class="vendor-table">
+      <thead><tr><th scope="col">Vendor</th><th scope="col">Volume</th><th scope="col">On-time</th></tr></thead>
+      <tbody>${vendors.map((v) => `<tr><th scope="row">Vendor ${formatNumber(v.rank)}</th><td>${formatNumber(v.volume30Day)}</td><td>${formatPercent(v.onTimePct)}</td></tr>`).join("")}</tbody>
+    </table><p class="vendor-note">Identidades ocultas. OT% do relatório.</p>` : `<p class="vendor-note">${message}</p>`}
+  </section>`;
+}
+
 function formatSummaryPopup(zone) {
   return `<div class="zone-popup">
     <div class="popup-kicker">${escapeHtml(zone.stateName)} / ${escapeHtml(zone.state)}</div>
     <h3 class="popup-title">Zona Z${escapeHtml(zone.zip3)}</h3>
     <div class="popup-metrics"><div><strong>${zone.hasZonePerformanceData ? formatNumber(zone.volume30Day) : "N/D"}</strong><span>Volume · 30 dias</span></div><div><strong>${zone.hasZonePerformanceData ? formatPercent(zone.onTimePct) : "N/D"}</strong><span>On-time</span></div></div>
+    ${topVendorsSummaryBlock(zone)}
     <dl class="popup-facts"><div><dt>ZIP principal</dt><dd>${escapeHtml(primaryZipSummary(zone))}</dd></div><div><dt>County principal</dt><dd>${escapeHtml(primaryCountySummary(zone))}</dd></div></dl>
     ${state.secretFocusEnabled && isSecretFocusZone(zone.zoneId) ? `<div class="popup-pink">Sua cobertura: ${escapeHtml(secretFocusMetricSummary(zone.zoneId))}</div>` : ""}
   </div>`;
@@ -769,6 +784,7 @@ function formatPopup(feature, full = false) {
     ${delinquencySummaryBlock(zone)}<br/>
     ${cfpbDelinquencySummaryBlock(zone)}<br/>
     ${zonePerformanceSummaryBlock(zone)}<br/>
+    ${topVendorsSummaryBlock(zone)}
     ${secretFocusSummaryBlock(zone)}
     Hotspot ativo no modo atual: ${hotspotLabel}<br/>
     <small>${escapeHtml(cityPreview(zone.cities, 7))}</small>
@@ -1607,6 +1623,7 @@ function attachZonePerformanceData(payload) {
         hasZonePerformanceData: false,
         volume30Day: 0,
         onTimePct: null,
+        topVendors: null,
         volume30DayRank: null,
         volume30DayStateRank: null,
         volume30DayStateZoneCount: null,
@@ -1619,6 +1636,7 @@ function attachZonePerformanceData(payload) {
       hasZonePerformanceData: true,
       volume30Day: performance.volume30Day,
       onTimePct: performance.onTimePct,
+      topVendors: Array.isArray(performance.topVendors) ? performance.topVendors.slice(0, 3) : null,
       volume30DayRank: performance.volume30DayRank,
       volume30DayStateRank: performance.volume30DayStateRank,
       volume30DayStateZoneCount: performance.volume30DayStateZoneCount,
@@ -1814,6 +1832,8 @@ function applyFilterChanges() {
 }
 
 function setupControls() {
+  map.on("popupopen", () => appShellEl.classList.add("map-popup-open"));
+  map.on("popupclose", () => appShellEl.classList.remove("map-popup-open"));
   zoneVolumeToggleButton.addEventListener("click", () => {
     state.showZoneVolume = !state.showZoneVolume;
     zoneVolumeToggleButton.setAttribute("aria-pressed", String(state.showZoneVolume));

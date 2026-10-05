@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { parseVendorRankings } from "./build-zone-top-vendors.mjs";
 import {
   zoneColor,
   labelPoint,
@@ -114,7 +115,7 @@ test("operational data and pink coverage share a reporting window and contain on
   const coverage = read("secret_focus_zones.json");
   const known = new Set(read("coverage_zip3_zones.json").map((z) => z.zoneId));
   const sum = (rows) => rows.reduce((s, z) => s + z.volume30Day, 0);
-  const performanceKeys = ["zoneId", "state", "zip3", "volume30Day", "onTimePct", "volume30DayRank", "volume30DayStateRank", "volume30DayStateZoneCount"].sort();
+  const performanceKeys = ["zoneId", "state", "zip3", "volume30Day", "onTimePct", "volume30DayRank", "volume30DayStateRank", "volume30DayStateZoneCount", "topVendors"].sort();
   const coverageKeys = ["zoneId", "state", "zip3", "volume30Day", "onTimePct", "entryCount"].sort();
   for (const key of ["sourceFile", "periodStart", "periodEnd"]) {
     assert(performance.source[key]);
@@ -130,6 +131,15 @@ test("operational data and pink coverage share a reporting window and contain on
     assert.equal(z.volume30DayRank, i + 1);
     assert(Number.isInteger(z.volume30Day) && z.volume30Day >= 0);
     assert(z.onTimePct == null || (z.onTimePct >= 0 && z.onTimePct <= 100));
+    assert(Array.isArray(z.topVendors) && z.topVendors.length <= 3);
+    assert(sum(z.topVendors) <= z.volume30Day);
+    z.topVendors.forEach((v, index) => {
+      assert.deepEqual(Object.keys(v).sort(), ["onTimePct", "rank", "volume30Day"]);
+      assert.equal(v.rank, index + 1);
+      assert(v.volume30Day > 0);
+      assert(v.onTimePct == null || (v.onTimePct >= 0 && v.onTimePct <= 100));
+      if (index) assert(z.topVendors[index - 1].volume30Day >= v.volume30Day);
+    });
     if (i) assert(performance.zones[i - 1].volume30Day >= z.volume30Day);
   });
   assert.equal(coverage.meta.zoneCount, coverage.zones.length);
@@ -142,4 +152,31 @@ test("operational data and pink coverage share a reporting window and contain on
     const total = performance.zones.find((p) => p.zoneId === z.zoneId);
     assert(total && total.volume30Day >= z.volume30Day, z.zoneId);
   }
+});
+
+test("top vendors use 30-day volume, anonymous ranks, and zone boundaries", () => {
+  const row = (A, B, C, D = 100) => ({ row: 1, cells: { A, B, C, D } });
+  const rows = [
+    row("Estado / Zona / Vendor", "30 Day Vol", "OT% 30d"),
+    row("OH", 260, 80), row("  OH Z431", 201, 80),
+    row("      EXAMPLE-A", 100, 70), row("      EXAMPLE-B", 50, 80),
+    row("      XX", 50, 0), row("      EXAMPLE-C", 1, 100),
+    row("      EXAMPLE-ZERO", 0, null), row("  OH NO_ZONE", 59, 99),
+    row("      EXAMPLE-NO-ZONE", 59, 99),
+    row("NJ", 2, 50), row("  NJ Z070", 2, 50), row("      EXAMPLE-NEW  (novo)", 2, null),
+    row("  NJ Z071", 0, null), row("      EXAMPLE-ZERO", 0, null),
+    row("WV", 100, 80), row("  WV Z8", 100, 80), row("      EXAMPLE-NON-ZIP3", 100, 80),
+  ];
+  const result = parseVendorRankings(rows);
+  assert.equal(result.size, 3);
+  assert.deepEqual(result.get("OH-431").topVendors, [
+    { rank: 1, volume30Day: 100, onTimePct: 70 },
+    { rank: 2, volume30Day: 50, onTimePct: 80 },
+    { rank: 3, volume30Day: 50, onTimePct: 0 },
+  ]);
+  assert.deepEqual(result.get("NJ-070").topVendors, [{ rank: 1, volume30Day: 2, onTimePct: null }]);
+  assert.deepEqual(result.get("NJ-071").topVendors, []);
+  assert(!JSON.stringify([...result]).includes("EXAMPLE"));
+  assert.throws(() => parseVendorRankings(rows.map((r, i) => i === 2 ? row("  OH Z431", 999, 80) : r)), /Vendor total mismatch/);
+  assert.throws(() => parseVendorRankings(rows.map((r, i) => i === 4 ? row("      EXAMPLE-A  (novo)", 50, 80) : r)), /Duplicate vendor/);
 });
