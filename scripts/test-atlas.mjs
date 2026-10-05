@@ -7,12 +7,27 @@ import {
   inPolygon,
   overlaps,
   weightedOnTime,
+  zoneVolumeLabel,
+  productionPeriodLabel,
 } from "../public/atlas-utils.js";
 
 test("pastel colors are stable, including ZIPs with leading zeroes", () => {
   assert.equal(zoneColor("010", "MA"), zoneColor(10, "MA"));
   assert.notEqual(zoneColor("430", "OH"), zoneColor("431", "OH"));
   assert.match(zoneColor("999", "AK"), /^#[a-f\d]{6}$/);
+});
+
+test("map volume labels distinguish a real zero from absent data", () => {
+  assert.equal(zoneVolumeLabel({ hasZonePerformanceData: true, volume30Day: 1464 }), "1,464");
+  assert.equal(zoneVolumeLabel({ hasZonePerformanceData: true, volume30Day: 0 }), "0");
+  assert.equal(zoneVolumeLabel({ hasZonePerformanceData: false, volume30Day: 0 }), "N/D");
+  assert.equal(zoneVolumeLabel({ hasZonePerformanceData: true, volume30Day: null }), "N/D");
+});
+
+test("production date reflects the report window, not the import date or local timezone", () => {
+  assert.equal(productionPeriodLabel({ periodStart: "2026-09-05", periodEnd: "2026-10-04", generatedAt: "2026-10-05T16:00:00Z" }), "Produção: 05/09 a 04/10/2026");
+  assert.equal(productionPeriodLabel({ periodStart: "2025-12-15", periodEnd: "2026-01-13" }), "Produção: 15/12/2025 a 13/01/2026");
+  assert.equal(productionPeriodLabel({ generatedAt: "2026-10-05T16:00:00Z" }), null);
 });
 
 test("labels stay inside concave polygons and outside holes", () => {
@@ -81,4 +96,40 @@ test("on-time is weighted by reported volume, excluding missing observations", (
     ]),
     0,
   );
+});
+
+test("operational data and pink coverage share a reporting window and contain only aggregate fields", () => {
+  const read = (file) => JSON.parse(fs.readFileSync(new URL(`../public/data/${file}`, import.meta.url)));
+  const performance = read("zone_performance_30day.json");
+  const coverage = read("secret_focus_zones.json");
+  const known = new Set(read("coverage_zip3_zones.json").map((z) => z.zoneId));
+  const sum = (rows) => rows.reduce((s, z) => s + z.volume30Day, 0);
+  const performanceKeys = ["zoneId", "state", "zip3", "volume30Day", "onTimePct", "volume30DayRank", "volume30DayStateRank", "volume30DayStateZoneCount"].sort();
+  const coverageKeys = ["zoneId", "state", "zip3", "volume30Day", "onTimePct", "entryCount"].sort();
+  for (const key of ["sourceFile", "periodStart", "periodEnd"]) {
+    assert(performance.source[key]);
+    assert.equal(performance.source[key], coverage.meta[key]);
+  }
+  assert.equal(performance.totals.zoneCount, performance.zones.length);
+  assert.equal(new Set(performance.zones.map((z) => z.zoneId)).size, performance.zones.length);
+  assert.equal(performance.totals.totalVolume30Day, sum(performance.zones));
+  assert.equal(performance.totals.matchedZoneCount, performance.zones.filter((z) => known.has(z.zoneId)).length);
+  assert.equal(performance.totals.reportedStateVolume30Day, performance.totals.totalVolume30Day + performance.totals.nonZip3Volume30Day + performance.totals.unlocatedVolume30Day);
+  performance.zones.forEach((z, i) => {
+    assert.deepEqual(Object.keys(z).sort(), performanceKeys);
+    assert.equal(z.volume30DayRank, i + 1);
+    assert(Number.isInteger(z.volume30Day) && z.volume30Day >= 0);
+    assert(z.onTimePct == null || (z.onTimePct >= 0 && z.onTimePct <= 100));
+    if (i) assert(performance.zones[i - 1].volume30Day >= z.volume30Day);
+  });
+  assert.equal(coverage.meta.zoneCount, coverage.zones.length);
+  assert.equal(new Set(coverage.zones.map((z) => z.zoneId)).size, coverage.zones.length);
+  assert.equal(coverage.meta.totalVolume30Day, sum(coverage.zones));
+  for (const z of coverage.zones) {
+    assert.deepEqual(Object.keys(z).sort(), coverageKeys);
+    assert(known.has(z.zoneId), z.zoneId);
+    assert(z.volume30Day > 0);
+    const total = performance.zones.find((p) => p.zoneId === z.zoneId);
+    assert(total && total.volume30Day >= z.volume30Day, z.zoneId);
+  }
 });

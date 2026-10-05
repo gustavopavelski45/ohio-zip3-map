@@ -21,7 +21,7 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
-    <link rel="stylesheet" href="./styles.css?v=all-us-v21" />
+    <link rel="stylesheet" href="./styles.css?v=all-us-v22" />
   </head>
   <body>
     <div id="app-shell" class="app-shell">
@@ -341,6 +341,20 @@
           </div>
           <span class="map-instruction">Clique em uma zona para explorar</span>
         </div>
+        <button
+          id="toggle-zone-volume"
+          class="map-button map-volume-toggle"
+          type="button"
+          aria-pressed="false"
+          aria-controls="map"
+          title="Mostrar o volume total de 30 dias ao lado do código de cada zona"
+        >
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+          Volume no mapa
+          <span class="volume-period">30d</span>
+        </button>
         <div id="map-loading" class="map-loading" role="status">
           <span class="loading-ring"></span
           ><strong>Desenhando territórios</strong
@@ -353,6 +367,6 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script type="module" src="./app.js?v=all-us-v21"></script>
+    <script type="module" src="./app.js?v=all-us-v22"></script>
   </body>
 </html>

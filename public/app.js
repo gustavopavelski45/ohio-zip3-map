@@ -3,7 +3,9 @@ import {
   labelPoint,
   overlaps,
   weightedOnTime,
-} from "./atlas-utils.js?v=all-us-v21";
+  zoneVolumeLabel,
+  productionPeriodLabel,
+} from "./atlas-utils.js?v=all-us-v22";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -12,7 +14,7 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v21";
+const DATA_VERSION = "all-us-v22";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -107,6 +109,7 @@ const state = {
   popupMode: "summary",
   showCities: true,
   showZip3Labels: true,
+  showZoneVolume: false,
   showCountyLabels: true,
   highlightHotspots: false,
   totalCountyFeatureCount: 0,
@@ -130,6 +133,7 @@ const modeHintEl = document.querySelector("#analysis-mode-hint");
 const filterSummaryEl = document.querySelector("#filter-summary");
 const toggleCitiesInput = document.querySelector("#toggle-cities");
 const toggleZip3LabelsInput = document.querySelector("#toggle-zip3-labels");
+const zoneVolumeToggleButton = document.querySelector("#toggle-zone-volume");
 const toggleCountyLabelsInput = document.querySelector("#toggle-county-labels");
 const toggleHotspotsInput = document.querySelector("#toggle-hotspots");
 const toggleFilteredMapInput = document.querySelector("#toggle-filtered-map");
@@ -228,6 +232,8 @@ function formatPercent(value) {
 }
 
 function formatDataStatusDate() {
+  const period = productionPeriodLabel(state.zonePerformanceSource);
+  if (period) return period;
   const generatedAt = state.zonePerformanceSource?.generatedAt;
   if (!generatedAt) {
     return "Cobertura nacional ZIP3 + counties";
@@ -1329,16 +1335,18 @@ function renderZip3Labels() {
       .latLngToContainerPoint(bounds.getNorthEast())
       .subtract(map.latLngToContainerPoint(bounds.getSouthWest()));
     if (Math.abs(size.x) < 35 || Math.abs(size.y) < 20) continue;
-    if (!reserveLabel(point, 58, 28)) continue;
+    const volume = zoneVolumeLabel(zone);
+    const width = state.showZoneVolume ? 100 + volume.length * 8 : 58;
+    if (!reserveLabel(point, width, 28)) continue;
     zip3LayerGroup.addLayer(
       L.marker([point.latitude, point.longitude], {
         interactive: false,
         keyboard: false,
         icon: L.divIcon({
-          className: `zip3-label${zone.zoneId === state.selectedZoneId ? " selected" : ""}${state.secretFocusEnabled ? (isSecretFocusZone(zone.zoneId) ? " covered" : " neighbor") : ""}`,
-          html: `Z${escapeHtml(zone.zip3)}`,
-          iconSize: [58, 28],
-          iconAnchor: [29, 14],
+          className: `zip3-label${state.showZoneVolume ? " with-volume" : ""}${zone.zoneId === state.selectedZoneId ? " selected" : ""}${state.secretFocusEnabled ? (isSecretFocusZone(zone.zoneId) ? " covered" : " neighbor") : ""}`,
+          html: `<span class="zip3-code">Z${escapeHtml(zone.zip3)}</span>${state.showZoneVolume ? ` <span class="zip3-volume" aria-label="Volume total de 30 dias: ${volume}">${volume} <small>vol</small></span>` : ""}`,
+          iconSize: [width, 28],
+          iconAnchor: [width / 2, 14],
         }),
       }),
     );
@@ -1453,12 +1461,18 @@ function reserveLabel(
 }
 function renderLabels() {
   if (!state.dataReady) return;
-  labelBoxes = [
-    { left: 0, right: 250, top: 0, bottom: 90 },
-    { left: map.getSize().x - 62, right: map.getSize().x, top: 0, bottom: 150 },
-  ];
-  if (state.secretFocusEnabled)
-    labelBoxes.push({ left: 0, right: 310, top: 90, bottom: 180 });
+  const mapRect = map.getContainer().getBoundingClientRect();
+  labelBoxes = [...document.querySelectorAll(
+    ".map-toolbar, #coverage-toolbar, #toggle-zone-volume, .map-reset, .map-bottom, .leaflet-control-zoom",
+  )].filter((el) => el.getClientRects().length).map((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      left: rect.left - mapRect.left - 8,
+      right: rect.right - mapRect.left + 8,
+      top: rect.top - mapRect.top - 8,
+      bottom: rect.bottom - mapRect.top + 8,
+    };
+  });
   renderZip3Labels();
   renderCountyLabels();
   renderCityLabels();
@@ -1632,7 +1646,7 @@ function attachSecretFocusData(payload) {
     const entry = {
       zoneId,
       volume30Day: Number(zone.volume30Day) || 0,
-      onTimePct: Number.isFinite(Number(zone.onTimePct))
+      onTimePct: zone.onTimePct != null && Number.isFinite(Number(zone.onTimePct))
         ? Number(zone.onTimePct)
         : null,
     };
@@ -1644,13 +1658,11 @@ function attachSecretFocusData(payload) {
     (sum, zone) => sum + zone.volume30Day,
     0,
   );
-  const weightedOnTimePct =
-    totalVolume30Day > 0
-      ? [...state.secretFocusByZoneId.values()].reduce(
-          (sum, zone) => sum + zone.volume30Day * (zone.onTimePct || 0),
-          0,
-        ) / totalVolume30Day
-      : null;
+  const weightedOnTimePct = weightedOnTime(
+    [...state.secretFocusByZoneId.values()].map((zone) => ({
+      ...zone, hasZonePerformanceData: true,
+    })),
+  );
 
   state.secretFocusTotals = {
     zoneCount: state.secretFocusZoneIds.size,
@@ -1797,6 +1809,20 @@ function applyFilterChanges() {
 }
 
 function setupControls() {
+  zoneVolumeToggleButton.addEventListener("click", () => {
+    state.showZoneVolume = !state.showZoneVolume;
+    zoneVolumeToggleButton.setAttribute("aria-pressed", String(state.showZoneVolume));
+    if (state.showZoneVolume) {
+      state.showZip3Labels = true;
+      toggleZip3LabelsInput.checked = true;
+      if (state.mapLayerMode === "counties") {
+        state.mapLayerMode = "both";
+        layerModeSelect.value = "both";
+        refreshLayerVisibility();
+      }
+    }
+    renderLabels();
+  });
   document.querySelector("#coverage-only").addEventListener("click", () => {
     state.coverageOnly = !state.coverageOnly;
     applyFilterChanges();
@@ -1978,6 +2004,10 @@ function setupControls() {
     const nextMode = String(event.target.value || "zip3");
     state.mapLayerMode =
       nextMode === "counties" || nextMode === "both" ? nextMode : "zip3";
+    if (state.mapLayerMode === "counties") {
+      state.showZoneVolume = false;
+      zoneVolumeToggleButton.setAttribute("aria-pressed", "false");
+    }
     if (state.mapLayerMode === "counties" && state.secretFocusEnabled) {
       state.secretFocusEnabled = false;
       state.coverageOnly = false;
@@ -1999,6 +2029,10 @@ function setupControls() {
 
   toggleZip3LabelsInput.addEventListener("change", (event) => {
     state.showZip3Labels = event.target.checked;
+    if (!state.showZip3Labels) {
+      state.showZoneVolume = false;
+      zoneVolumeToggleButton.setAttribute("aria-pressed", "false");
+    }
     renderLabels();
   });
 

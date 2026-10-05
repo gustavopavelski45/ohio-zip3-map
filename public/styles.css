@@ -760,6 +760,29 @@ h2 {
 .map-button:hover {
   background: var(--soft);
 }
+.map-volume-toggle {
+  position: absolute;
+  right: 24px;
+  bottom: 78px;
+  z-index: 800;
+  min-height: 40px;
+  font-weight: 600;
+}
+.map-volume-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+.map-volume-toggle[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--white);
+  border-color: var(--ink);
+}
+.volume-period {
+  font: 10px "DM Mono", monospace;
+  opacity: 0.7;
+  padding-left: 7px;
+  border-left: 1px solid currentColor;
+}
 #panel-reopen {
   display: none;
 }
@@ -885,6 +908,34 @@ h2 {
 .zip3-label.selected {
   color: #101910;
   font-size: 18px;
+}
+.zip3-label.with-volume {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.zip3-volume {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 5px;
+  border: 1px solid #6f7c6655;
+  border-radius: 4px;
+  background: #fffef8ed;
+  color: #243522;
+  font: 500 11px/15px "DM Mono", monospace;
+  letter-spacing: -0.3px;
+  text-shadow: none;
+}
+.zip3-volume small {
+  font: 9px "DM Sans", sans-serif;
+  color: #687363;
+}
+.covered .zip3-volume {
+  background: #fff6fbf5;
+  border-color: #b64e7b77;
+  color: #741c43;
 }
 .city-label {
   font:
@@ -1152,6 +1203,10 @@ h2 {
   .map-reset {
     top: 96px;
     right: 12px;
+  }
+  .map-volume-toggle {
+    right: 12px;
+    bottom: 78px;
   }
   .map-bottom {
     left: 12px;

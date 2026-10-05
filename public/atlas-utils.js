@@ -106,3 +106,28 @@ export function weightedOnTime(zones) {
     ? reported.reduce((sum, z) => sum + z.volume30Day * z.onTimePct, 0) / total
     : null;
 }
+
+export function zoneVolumeLabel(zone) {
+  if (
+    !zone.hasZonePerformanceData ||
+    zone.volume30Day == null ||
+    !Number.isFinite(Number(zone.volume30Day))
+  ) return "N/D";
+  return new Intl.NumberFormat("en-US").format(Math.round(zone.volume30Day));
+}
+
+export function productionPeriodLabel(source) {
+  const parseDate = (value) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return null;
+    const date = new Date(`${value}T12:00:00Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+  const start = parseDate(source?.periodStart);
+  const end = parseDate(source?.periodEnd);
+  if (!start || !end) return null;
+  const format = (date, year) => new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit", month: "2-digit", ...(year ? { year: "numeric" } : {}),
+    timeZone: "UTC",
+  }).format(date);
+  return `Produção: ${format(start, start.getUTCFullYear() !== end.getUTCFullYear())} a ${format(end, true)}`;
+}
