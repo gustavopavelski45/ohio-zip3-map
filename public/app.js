@@ -3,7 +3,7 @@ import {
   labelPoint,
   overlaps,
   weightedOnTime,
-} from "./atlas-utils.js?v=all-us-v20";
+} from "./atlas-utils.js?v=all-us-v21";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -12,7 +12,7 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v20";
+const DATA_VERSION = "all-us-v21";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -86,6 +86,7 @@ const state = {
   zoneLayer: null,
   secretFocusLayer: null,
   secretFocusEnabled: false,
+  coverageOnly: false,
   secretFocusZoneIds: new Set(),
   secretFocusByZoneId: new Map(),
   secretFocusTotals: null,
@@ -472,6 +473,9 @@ function zonePassesActiveFilters(zone) {
 function isListedZone(zone) {
   return (
     (!state.selectedState || zone.state === state.selectedState) &&
+    (!state.secretFocusEnabled ||
+      !state.coverageOnly ||
+      isSecretFocusZone(zone.zoneId)) &&
     zonePassesActiveFilters(zone)
   );
 }
@@ -480,6 +484,13 @@ function isMapVisibleZone(zone) {
   if (!zone || !isWorkZone(zone.zoneId)) {
     return false;
   }
+
+  if (
+    state.secretFocusEnabled &&
+    state.coverageOnly &&
+    !isSecretFocusZone(zone.zoneId)
+  )
+    return false;
 
   return state.mapShowsFilteredZones ? zonePassesActiveFilters(zone) : true;
 }
@@ -546,6 +557,17 @@ function styleForFeature(feature) {
   if (!zone || !isActiveZone(zone.zoneId))
     return { weight: 0, opacity: 0, fillOpacity: 0 };
   const selected = state.selectedZoneId === zone.zoneId;
+  if (state.secretFocusEnabled) {
+    const covered = isSecretFocusZone(zone.zoneId);
+    return {
+      color: selected ? "#313b33" : "#9ba397",
+      weight: selected ? 2.5 : 1.1,
+      opacity: covered ? 0 : 0.8,
+      fillColor: "#d8ddd2",
+      fillOpacity: covered ? 0 : 0.34,
+      dashArray: null,
+    };
+  }
   const hotspot = state.highlightHotspots && isZoneHotspot(zone);
   return {
     color: hotspot && !selected ? "#9a6226" : "#262a23",
@@ -583,11 +605,11 @@ function styleForCountyOutlineFeature() {
 function styleForSecretFocusFeature(feature) {
   const visible = isActiveZone(feature.properties.zoneId);
   return {
-    color: "#ae3a71",
-    weight: 2,
+    color: "#962858",
+    weight: state.selectedZoneId === feature.properties.zoneId ? 3.5 : 2.6,
     opacity: visible ? 0.95 : 0,
-    fillColor: "#ee85b4",
-    fillOpacity: visible ? 0.52 : 0,
+    fillColor: "#ec7eae",
+    fillOpacity: visible ? 0.68 : 0,
     interactive: false,
   };
 }
@@ -811,6 +833,17 @@ function bringLayerToFront(layer) {
 function refreshLayerLegendText() {
   refreshInterfaceStatus();
 
+  document.querySelector(".legend-note").textContent = state.secretFocusEnabled
+    ? state.coverageOnly
+      ? "Somente suas zonas"
+      : "Vizinhas em cinza"
+    : "Cores distinguem territórios";
+  if (state.secretFocusEnabled) {
+    legendLayerLabelEl.textContent = "Sua cobertura";
+    legendLayerSwatchEl.classList.remove("county", "combined");
+    return;
+  }
+
   if (!legendLayerLabelEl) {
     return;
   }
@@ -998,6 +1031,7 @@ function refreshSelectionDetails() {
 function refreshDecisionPanel() {
   refreshFilterSummary();
   refreshSelectionDetails();
+  refreshSecretFocusUi();
 }
 
 function refreshStats() {
@@ -1234,7 +1268,13 @@ function compareZoneByMode(a, b) {
 }
 
 function renderZoneList() {
-  const zones = getActiveZones().sort(compareZoneByMode);
+  const zones = getActiveZones().sort(
+    (a, b) =>
+      (state.secretFocusEnabled
+        ? Number(isSecretFocusZone(b.zoneId)) -
+          Number(isSecretFocusZone(a.zoneId))
+        : 0) || compareZoneByMode(a, b),
+  );
   zoneResultCountEl.textContent = formatNumber(zones.length);
   if (!zones.length) {
     zoneListEl.innerHTML =
@@ -1295,7 +1335,7 @@ function renderZip3Labels() {
         interactive: false,
         keyboard: false,
         icon: L.divIcon({
-          className: `zip3-label${zone.zoneId === state.selectedZoneId ? " selected" : ""}`,
+          className: `zip3-label${zone.zoneId === state.selectedZoneId ? " selected" : ""}${state.secretFocusEnabled ? (isSecretFocusZone(zone.zoneId) ? " covered" : " neighbor") : ""}`,
           html: `Z${escapeHtml(zone.zip3)}`,
           iconSize: [58, 28],
           iconAnchor: [29, 14],
@@ -1417,6 +1457,8 @@ function renderLabels() {
     { left: 0, right: 250, top: 0, bottom: 90 },
     { left: map.getSize().x - 62, right: map.getSize().x, top: 0, bottom: 150 },
   ];
+  if (state.secretFocusEnabled)
+    labelBoxes.push({ left: 0, right: 310, top: 90, bottom: 180 });
   renderZip3Labels();
   renderCountyLabels();
   renderCityLabels();
@@ -1631,7 +1673,18 @@ function secretFocusMetricSummary(zoneId) {
 }
 
 function refreshSecretFocusUi() {
+  const showHotspots = state.highlightHotspots && !state.secretFocusEnabled;
+  legendHotspotLabelEl.hidden = !showHotspots;
+  document.querySelector(".swatch.hotspot").hidden = !showHotspots;
+  appShellEl.classList.toggle("coverage-active", state.secretFocusEnabled);
+  document.querySelector("#coverage-toolbar").hidden =
+    !state.secretFocusEnabled;
+  document
+    .querySelector("#coverage-only")
+    .setAttribute("aria-pressed", String(state.coverageOnly));
   if (secretFocusToggleButton) {
+    secretFocusToggleButton.disabled =
+      !state.dataReady || !state.secretFocusTotals;
     secretFocusToggleButton.classList.toggle(
       "active",
       state.secretFocusEnabled,
@@ -1652,11 +1705,41 @@ function refreshSecretFocusUi() {
     return;
   }
 
+  const zones = coverageZonesInScope();
+  const region =
+    state.states.find((s) => s.state === state.selectedState)?.stateName ||
+    "EUA";
+  const countLabel = `${zones.length} ${zones.length === 1 ? "zona sua" : "zonas suas"} em ${region}`;
+  document.querySelector("#coverage-count").textContent = countLabel;
+  document.querySelector("#coverage-fit").disabled = !zones.length;
   secretFocusSummaryEl.hidden = false;
-  secretFocusSummaryEl.textContent =
-    `Camada rosa ativa: ${formatNumber(state.secretFocusTotals.zoneCount)} zonas • ` +
-    `${formatNumber(state.secretFocusTotals.totalVolume30Day)} vol 30d • ` +
-    `OT ${formatPercent(state.secretFocusTotals.weightedOnTimePct)}`;
+  secretFocusSummaryEl.textContent = zones.length
+    ? `${countLabel}. Rosa mostra onde você já trabalha; cinza mostra as vizinhas. Os filtros continuam valendo.`
+    : `Nenhuma área sua neste recorte. Altere o estado ou limpe os filtros para ver sua cobertura.`;
+}
+
+function coverageZonesInScope() {
+  return state.zones.filter(
+    (zone) =>
+      isSecretFocusZone(zone.zoneId) &&
+      (!state.selectedState || zone.state === state.selectedState) &&
+      zonePassesActiveFilters(zone),
+  );
+}
+
+function fitCoverage() {
+  const bounds = L.latLngBounds([]);
+  for (const zone of coverageZonesInScope()) {
+    const zoneBounds = state.boundsByZoneId.get(zone.zoneId);
+    if (zoneBounds) bounds.extend(zoneBounds);
+  }
+  if (bounds.isValid())
+    map.fitBounds(bounds, {
+      animate: false,
+      paddingTopLeft: [35, 190],
+      paddingBottomRight: [35, 60],
+      maxZoom: 10,
+    });
 }
 
 function syncFilterStateFromInputs() {
@@ -1703,6 +1786,8 @@ function applyFilterChanges() {
     map.closePopup();
   }
 
+  refreshSecretFocusUi();
+  refreshLayerLegendText();
   refreshStyles();
   refreshPrimaryCountyHighlight();
   renderZoneList();
@@ -1712,6 +1797,13 @@ function applyFilterChanges() {
 }
 
 function setupControls() {
+  document.querySelector("#coverage-only").addEventListener("click", () => {
+    state.coverageOnly = !state.coverageOnly;
+    applyFilterChanges();
+  });
+  document
+    .querySelector("#coverage-fit")
+    .addEventListener("click", fitCoverage);
   if (window.matchMedia("(max-width:700px)").matches) setPanelCollapsed(true);
   document
     .querySelector("#state-select")
@@ -1833,11 +1925,14 @@ function setupControls() {
 
   secretFocusToggleButton?.addEventListener("click", () => {
     state.secretFocusEnabled = !state.secretFocusEnabled;
+    if (!state.secretFocusEnabled) state.coverageOnly = false;
+    if (state.secretFocusEnabled && state.mapLayerMode === "counties") {
+      state.mapLayerMode = "both";
+      layerModeSelect.value = "both";
+    }
     refreshSecretFocusUi();
     refreshLayerVisibility();
-    renderZoneList();
-    refreshStats();
-    refreshDecisionPanel();
+    applyFilterChanges();
   });
 
   modeSelect.addEventListener("change", (event) => {
@@ -1883,6 +1978,11 @@ function setupControls() {
     const nextMode = String(event.target.value || "zip3");
     state.mapLayerMode =
       nextMode === "counties" || nextMode === "both" ? nextMode : "zip3";
+    if (state.mapLayerMode === "counties" && state.secretFocusEnabled) {
+      state.secretFocusEnabled = false;
+      state.coverageOnly = false;
+      applyFilterChanges();
+    }
     refreshLayerVisibility();
   });
 

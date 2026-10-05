@@ -21,7 +21,7 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
-    <link rel="stylesheet" href="./styles.css?v=all-us-v20" />
+    <link rel="stylesheet" href="./styles.css?v=all-us-v21" />
   </head>
   <body>
     <div id="app-shell" class="app-shell">
@@ -52,11 +52,12 @@
             id="secret-focus-toggle"
             class="secret-focus-toggle"
             type="button"
-            aria-label="Camada rosa"
+            aria-label="Minha cobertura"
             aria-pressed="false"
-            title="Camada rosa"
+            title="Destacar minhas áreas e comparar com as vizinhas"
           >
-            <span></span>
+            <span class="coverage-dot" aria-hidden="true"></span>
+            <span>Minha cobertura</span>
           </button>
           <button id="view-usa" class="quiet-button" type="button">
             Ver EUA <span aria-hidden="true">↗</span>
@@ -295,6 +296,18 @@
             ><span class="map-subtitle" id="map-context-layer">Zonas ZIP3</span>
           </div>
         </div>
+        <div id="coverage-toolbar" class="coverage-toolbar" hidden>
+          <div class="coverage-heading">
+            <span class="coverage-dot" aria-hidden="true"></span
+            ><strong id="coverage-count" aria-live="polite">Suas áreas</strong>
+          </div>
+          <div class="coverage-actions">
+            <button id="coverage-only" type="button" aria-pressed="false">
+              Só minhas áreas
+            </button>
+            <button id="coverage-fit" type="button">Enquadrar ↗</button>
+          </div>
+        </div>
         <button
           id="fit-state"
           class="map-button map-reset"
@@ -340,6 +353,6 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script type="module" src="./app.js?v=all-us-v20"></script>
+    <script type="module" src="./app.js?v=all-us-v21"></script>
   </body>
 </html>
