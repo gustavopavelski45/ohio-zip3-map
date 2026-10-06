@@ -57,7 +57,7 @@ Para desativar autenticacao (opcional):
 - `npm run prepare-mortgage-data`: gera `public/data/hmda_county_2024.json` a partir do snapshot HMDA oficial (FFIEC/CFPB)
 - `npm run prepare-cfpb-data`: gera `public/data/cfpb_mortgage_distress_12m.json` (API publica CFPB)
 - `npm run prepare-zone-performance-data -- arquivo.txt`: gera `public/data/zone_performance_30day.json` com apenas zona, volume 30 dias e OT%
-- `npm run prepare-vendor-data -- arquivo.xlsx`: adiciona os codigos dos 3 vendors de maior volume por zona, com OT% de 30 dias. Requer Python 3 (ou `PYTHON_BIN`); o arquivo, periodo e totais devem corresponder ao relatorio operacional atual. Execute novamente apos cada atualizacao desse relatorio.
+- `npm run prepare-vendor-data -- arquivo.xlsx`: importa o relatorio operacional completo e atualiza volume 30 dias, OT%, rankings, Top 3 vendors e a camada rosa J9OHFI. Requer Python 3 (ou `PYTHON_BIN`); valida periodo, totais por zona, cobertura do mapa e os totais reportados antes de gravar os dados.
 - `npm run prepare-county-data`: gera `public/data/coverage_counties.geojson`
 - `npm run prepare-data`: baixa os limites ZIP5 por estado, agrega em zonas `STATE-ZIP3` e gera:
   - `public/data/coverage_zip3.geojson`

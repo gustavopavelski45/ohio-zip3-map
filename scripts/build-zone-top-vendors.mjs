@@ -45,12 +45,16 @@ with zipfile.ZipFile(sys.argv[1]) as book:
     print(json.dumps(sheets))
 `;
 
-export function parseVendorRankings(rows) {
+export function parseZoneReport(rows) {
   assert.equal(rows[0]?.cells.B, "30 Day Vol", "Expected 30-day volume column");
   assert(["OT%", "OT% 30d"].includes(rows[0]?.cells.C), "Expected 30-day on-time column");
   const groups = new Map();
+  const stateTotals = new Map();
+  let nonZip3Volume30Day = 0;
+  let unlocatedVolume30Day = 0;
   let state = null;
   let group = null;
+  let rowOrder = 0;
   const metrics = (cells, row) => {
     assert(Number.isInteger(cells.B) && cells.B >= 0, `Invalid volume at row ${row}`);
     assert(cells.C == null || (typeof cells.C === "number" && cells.C >= 0 && cells.C <= 100), `Invalid OT at row ${row}`);
@@ -62,6 +66,9 @@ export function parseVendorRankings(rows) {
     if (!label) continue;
     if (raw === label && /^[A-Z]{2}$/.test(label)) {
       state = label;
+      const summary = metrics(cells, row);
+      assert(!stateTotals.has(state), `Duplicate state at row ${row}`);
+      stateTotals.set(state, summary.volume30Day);
       group = null;
       continue;
     }
@@ -70,10 +77,18 @@ export function parseVendorRankings(rows) {
       group = null;
       assert.equal(header[1], state, `Unexpected state at row ${row}`);
       const zip3 = header[2].replace(/^Z/, "");
-      if (!/^\d{3}$/.test(zip3)) continue;
+      const { volume30Day, onTimePct } = metrics(cells, row);
+      if (zip3 === "NO_ZONE") {
+        unlocatedVolume30Day += volume30Day;
+        continue;
+      }
+      if (!/^\d{3}$/.test(zip3)) {
+        nonZip3Volume30Day += volume30Day;
+        continue;
+      }
       const zoneId = `${state}-${zip3}`;
       assert(!groups.has(zoneId), `Duplicate zone at row ${row}`);
-      group = { ...metrics(cells, row), vendors: [], identifiers: new Set() };
+      group = { zoneId, state, zip3, volume30Day, onTimePct, vendors: [], identifiers: new Set(), rowOrder: rowOrder++ };
       groups.set(zoneId, group);
       continue;
     }
@@ -83,41 +98,147 @@ export function parseVendorRankings(rows) {
     group.identifiers.add(identifier);
     group.vendors.push({ vendorCode: identifier, ...metrics(cells, row) });
   }
-  return new Map([...groups].map(([zoneId, entry]) => {
+  const zones = new Map([...groups].map(([zoneId, entry]) => {
     assert.equal(entry.vendors.reduce((sum, v) => sum + v.volume30Day, 0), entry.volume30Day, `Vendor total mismatch: ${zoneId}`);
     const topVendors = entry.vendors
       .filter((v) => v.volume30Day > 0)
       .sort((a, b) => b.volume30Day - a.volume30Day || (b.onTimePct ?? -1) - (a.onTimePct ?? -1))
       .slice(0, 3)
       .map((vendor, index) => ({ rank: index + 1, ...vendor }));
-    return [zoneId, { volume30Day: entry.volume30Day, onTimePct: entry.onTimePct, topVendors }];
+    return [zoneId, { ...entry, topVendors }];
   }));
+
+  assert(stateTotals.size > 0, "Missing state totals");
+  const stateVolume = [...stateTotals.values()].reduce((sum, volume) => sum + volume, 0);
+  const zoneVolume = [...zones.values()].reduce((sum, zone) => sum + zone.volume30Day, 0);
+  assert.equal(stateVolume, zoneVolume + nonZip3Volume30Day + unlocatedVolume30Day, "State, ZIP3, non-ZIP3, and unlocated totals do not reconcile");
+
+  return { zones, stateTotals, nonZip3Volume30Day, unlocatedVolume30Day, reportedStateVolume30Day: stateVolume };
+}
+
+export function parseVendorRankings(rows) {
+  const report = parseZoneReport(rows);
+  return new Map([...report.zones].map(([zoneId, zone]) => [zoneId, {
+    volume30Day: zone.volume30Day,
+    onTimePct: zone.onTimePct,
+    topVendors: zone.topVendors
+  }]));
+}
+
+function rankZones(zones) {
+  const sorted = zones.slice().sort((a, b) => b.volume30Day - a.volume30Day || a.zoneId.localeCompare(b.zoneId));
+  sorted.forEach((zone, index) => { zone.volume30DayRank = index + 1; });
+
+  const byState = new Map();
+  for (const zone of sorted) {
+    if (!byState.has(zone.state)) byState.set(zone.state, []);
+    byState.get(zone.state).push(zone);
+  }
+  for (const stateZones of byState.values()) {
+    stateZones.forEach((zone, index) => {
+      zone.volume30DayStateRank = index + 1;
+      zone.volume30DayStateZoneCount = stateZones.length;
+    });
+  }
+  return sorted;
+}
+
+function weightedOnTimePct(zones) {
+  const observed = zones.filter((zone) => zone.onTimePct != null);
+  const volume = observed.reduce((sum, zone) => sum + zone.volume30Day, 0);
+  if (volume <= 0) return null;
+  const weighted = observed.reduce((sum, zone) => sum + zone.volume30Day * zone.onTimePct, 0);
+  return Number((weighted / volume).toFixed(1));
+}
+
+async function loadMapZoneIds(projectRoot) {
+  const raw = await fs.readFile(path.join(projectRoot, "public", "data", "coverage_zip3_zones.json"), "utf8");
+  const zones = JSON.parse(raw);
+  assert(Array.isArray(zones), "Map ZIP3 zone data is invalid");
+  return new Set(zones.map((zone) => zone.zoneId).filter(Boolean));
 }
 
 async function main() {
   const input = process.argv[2];
   assert(input, "Usage: npm run prepare-vendor-data -- /path/to/report.xlsx");
-  const dataPath = new URL("../public/data/zone_performance_30day.json", import.meta.url);
-  const performance = JSON.parse(await fs.readFile(dataPath, "utf8"));
-  assert.equal(path.basename(input), performance.source.sourceFile, "Update the zone report first; source files must match");
   const sheets = JSON.parse(execFileSync(process.env.PYTHON_BIN || "python3", ["-c", READ_XLSX, input], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }));
   const period = sheets.Criterios?.find((r) => r.cells.A === "Producao 30d")?.cells.B;
   const match = String(period || "").match(/^(\d{4}-\d{2}-\d{2}) a (\d{4}-\d{2}-\d{2});/);
   assert(match, "Missing reporting period");
-  assert.equal(match[1], performance.source.periodStart);
-  assert.equal(match[2], performance.source.periodEnd);
-  const rankings = parseVendorRankings(sheets["Production Report"]);
-  assert.equal(rankings.size, performance.zones.length, "Zone count differs from the current report");
-  for (const zone of performance.zones) {
-    const ranking = rankings.get(zone.zoneId);
-    assert(ranking, `Missing zone ${zone.zoneId}`);
-    assert.equal(ranking.volume30Day, zone.volume30Day, zone.zoneId);
-    assert.equal(ranking.onTimePct, zone.onTimePct, zone.zoneId);
-    zone.topVendors = ranking.topVendors;
+  const report = parseZoneReport(sheets["Production Report"]);
+  const mapZoneIds = await loadMapZoneIds(path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
+  const zones = rankZones([...report.zones.values()].map(({ identifiers, vendors, rowOrder, ...zone }) => zone));
+  const matchedZoneIds = new Set(zones.filter((zone) => mapZoneIds.has(zone.zoneId)).map((zone) => zone.zoneId));
+  const unmatchedZoneIds = zones.map((zone) => zone.zoneId).filter((zoneId) => !mapZoneIds.has(zoneId));
+  const totalVolume30Day = zones.reduce((sum, zone) => sum + zone.volume30Day, 0);
+  const matchedVolume30Day = zones.filter((zone) => matchedZoneIds.has(zone.zoneId)).reduce((sum, zone) => sum + zone.volume30Day, 0);
+  const periodStart = match[1];
+  const periodEnd = match[2];
+  const generatedAt = new Date().toISOString();
+  const sourceFile = path.basename(input);
+  const performance = {
+    source: {
+      reportWindow: "30 Day",
+      sourceFile,
+      sheetName: "Production Report",
+      periodStart,
+      periodEnd,
+      generatedAt,
+      vendorRanking: "volume30Day descending; onTimePct descending on ties"
+    },
+    totals: {
+      zoneCount: zones.length,
+      matchedZoneCount: matchedZoneIds.size,
+      unmatchedZoneIds,
+      totalVolume30Day,
+      weightedOnTimePct: weightedOnTimePct(zones),
+      matchedVolume30Day,
+      unmatchedVolume30Day: totalVolume30Day - matchedVolume30Day,
+      unlocatedVolume30Day: report.unlocatedVolume30Day,
+      nonZip3Volume30Day: report.nonZip3Volume30Day,
+      reportedStateVolume30Day: report.reportedStateVolume30Day
+    },
+    zones
+  };
+
+  const focusPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "../public/data/secret_focus_zones.json");
+  const focusCurrent = JSON.parse(await fs.readFile(focusPath, "utf8"));
+  const focusZones = [];
+  for (const [zoneId, reportZone] of report.zones) {
+    const vendor = reportZone.vendors.find((entry) => entry.vendorCode === "J9OHFI" && entry.volume30Day > 0);
+    if (!vendor || !mapZoneIds.has(zoneId)) continue;
+    focusZones.push({
+      zoneId,
+      state: reportZone.state,
+      zip3: reportZone.zip3,
+      volume30Day: vendor.volume30Day,
+      onTimePct: vendor.onTimePct,
+      entryCount: 1
+    });
   }
-  performance.source.vendorRanking = "volume30Day descending; onTimePct descending on ties";
-  await fs.writeFile(dataPath, JSON.stringify(performance) + "\n");
-  console.log(`Updated vendor rankings for ${rankings.size} zones.`);
+  focusZones.sort((a, b) => b.volume30Day - a.volume30Day || a.zoneId.localeCompare(b.zoneId));
+  const focusPayload = {
+    meta: {
+      ...focusCurrent.meta,
+      zoneCount: focusZones.length,
+      totalVolume30Day: focusZones.reduce((sum, zone) => sum + zone.volume30Day, 0),
+      weightedOnTimePct: weightedOnTimePct(focusZones),
+      sourceFile,
+      sheetName: "Production Report",
+      periodStart,
+      periodEnd,
+      generatedAt
+    },
+    zones: focusZones
+  };
+
+  const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  await fs.writeFile(path.join(projectRoot, "public/data/zone_performance_30day.json"), JSON.stringify(performance) + "\n");
+  await fs.writeFile(path.join(projectRoot, "public/data/secret_focus_zones.json"), JSON.stringify(focusPayload) + "\n");
+  console.log(`Imported ${zones.length} ZIP3 zones from ${sourceFile} (${periodStart} to ${periodEnd}).`);
+  console.log(`Matched map zones: ${matchedZoneIds.size}; unmatched: ${unmatchedZoneIds.length}.`);
+  console.log(`30-day volume: ${totalVolume30Day.toLocaleString("en-US")}; weighted OT: ${performance.totals.weightedOnTimePct ?? "N/D"}%.`);
+  console.log(`J9OHFI coverage: ${focusZones.length} zones; ${focusPayload.meta.totalVolume30Day.toLocaleString("en-US")} volume.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
