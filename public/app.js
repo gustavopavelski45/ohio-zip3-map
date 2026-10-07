@@ -6,7 +6,7 @@ import {
   zoneVolumeLabel,
   zoneOnTimeLabel,
   productionPeriodLabel,
-} from "./atlas-utils.js?v=all-us-v27";
+} from "./atlas-utils.js?v=all-us-v28";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -15,7 +15,7 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v27";
+const DATA_VERSION = "all-us-v28";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
