@@ -138,6 +138,39 @@ h1 span {
 .quiet-button span {
   padding-left: 12px;
 }
+.watchtower-sync-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid #c9d7ca;
+  border-radius: 6px;
+  background: #f4f8f1;
+  color: #315a3d;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.watchtower-sync-button:hover,
+.watchtower-sync-button.is-synced {
+  background: #e8f1e5;
+  border-color: #adc5ae;
+}
+.watchtower-sync-button.is-syncing svg {
+  animation: spin 1s linear infinite;
+}
+.watchtower-sync-button.is-error {
+  color: #8b3f38;
+  border-color: #dfb9b3;
+  background: #fff4f1;
+}
+.watchtower-sync-button svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+}
 .secret-focus-toggle {
   min-height: 36px;
   display: flex;
@@ -1216,6 +1249,24 @@ h2 {
     font-size: 11px;
     padding: 8px 9px;
     gap: 6px;
+  }
+  .watchtower-sync-button {
+    width: auto;
+    min-width: 60px;
+    min-height: 34px;
+    padding: 8px 9px;
+    gap: 5px;
+  }
+  .watchtower-sync-button span {
+    display: inline;
+    font-size: 0;
+  }
+  .watchtower-sync-button span::after {
+    content: "Sync";
+    font-size: 10px;
+  }
+  .watchtower-sync-button.is-error span::after {
+    content: "Erro";
   }
   .coverage-toolbar {
     padding: 10px 12px;

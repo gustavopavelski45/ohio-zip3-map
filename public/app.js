@@ -6,7 +6,7 @@ import {
   zoneVolumeLabel,
   zoneOnTimeLabel,
   productionPeriodLabel,
-} from "./atlas-utils.js?v=all-us-v28";
+} from "./atlas-utils.js?v=all-us-v29";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -15,7 +15,9 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v28";
+const DATA_VERSION = "all-us-v29";
+const WATCHTOWER_API = "http://localhost:4320/api";
+const WATCHTOWER_SNAPSHOT_KEY = "pavelski-zope-map-watchtower-v1";
 
 L.control.zoom({ position: "topright" }).addTo(map);
 
@@ -130,6 +132,9 @@ const housingMinInput = document.querySelector("#housing-min");
 const resetFiltersButton = document.querySelector("#reset-filters");
 const secretFocusToggleButton = document.querySelector("#secret-focus-toggle");
 const secretFocusSummaryEl = document.querySelector("#secret-focus-summary");
+const watchtowerSyncButton = document.querySelector("#watchtower-sync");
+const watchtowerSyncLabel = document.querySelector("#watchtower-sync-label");
+const watchtowerSyncStatus = document.querySelector("#watchtower-sync-status");
 const modeHintEl = document.querySelector("#analysis-mode-hint");
 const filterSummaryEl = document.querySelector("#filter-summary");
 const toggleCitiesInput = document.querySelector("#toggle-cities");
@@ -1694,6 +1699,155 @@ function attachSecretFocusData(payload) {
   };
 }
 
+function readSavedWatchtowerSnapshot() {
+  try {
+    const snapshot = JSON.parse(localStorage.getItem(WATCHTOWER_SNAPSHOT_KEY) || "null");
+    if (
+      !snapshot?.performance ||
+      !Array.isArray(snapshot.performance.zones) ||
+      !snapshot?.focus ||
+      !Array.isArray(snapshot.focus.zones)
+    ) {
+      return null;
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function shouldUseSavedWatchtowerSnapshot(snapshot, staticPerformance) {
+  if (!snapshot) return false;
+  const savedPeriod = snapshot.performance.source?.periodEnd || "";
+  const staticPeriod = staticPerformance?.source?.periodEnd || "";
+  if (savedPeriod && staticPeriod && savedPeriod !== staticPeriod) {
+    return savedPeriod > staticPeriod;
+  }
+
+  const syncedAt = Date.parse(snapshot.syncedAt || "");
+  const staticGeneratedAt = Date.parse(staticPerformance?.source?.generatedAt || "");
+  return Number.isFinite(syncedAt) &&
+    (!Number.isFinite(staticGeneratedAt) || syncedAt > staticGeneratedAt);
+}
+
+function applyWatchtowerSnapshot(snapshot) {
+  attachZonePerformanceData(snapshot.performance);
+  attachSecretFocusData(snapshot.focus);
+}
+
+function watchtowerPeriodLabel(source) {
+  const dateValue = source?.productionThroughDate || source?.periodEnd;
+  if (!dateValue) return "";
+  const date = new Date(`${dateValue}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return dateValue;
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function setWatchtowerButtonState({ label = "Watchtower", status = "", kind = "", title = "", disabled } = {}) {
+  if (!watchtowerSyncButton) return;
+  watchtowerSyncLabel.textContent = label;
+  watchtowerSyncButton.classList.toggle("is-syncing", kind === "syncing");
+  watchtowerSyncButton.classList.toggle("is-synced", kind === "synced");
+  watchtowerSyncButton.classList.toggle("is-error", kind === "error");
+  watchtowerSyncButton.setAttribute(
+    "aria-label",
+    kind === "syncing" ? "Atualizando dados pelo Watchtower" : "Atualizar dados pelo Watchtower",
+  );
+  watchtowerSyncButton.title = title || "Buscar os dados atuais do Watchtower local";
+  if (disabled != null) watchtowerSyncButton.disabled = disabled;
+  if (watchtowerSyncStatus) watchtowerSyncStatus.textContent = status;
+}
+
+async function requestWatchtower(path, options = {}) {
+  const response = await fetch(`${WATCHTOWER_API}${path}`, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Watchtower respondeu ${response.status}.`);
+  }
+  return payload;
+}
+
+async function syncFromWatchtower() {
+  if (!watchtowerSyncButton || watchtowerSyncButton.disabled) return;
+  setWatchtowerButtonState({
+    label: "Conectando...",
+    status: "Conectando ao Watchtower local.",
+    kind: "syncing",
+    disabled: true,
+  });
+
+  try {
+    await requestWatchtower("/map-refresh", { method: "POST" });
+    const deadline = Date.now() + 12 * 60 * 1000;
+    let progress;
+    do {
+      await new Promise((resolve) => window.setTimeout(resolve, 1300));
+      progress = await requestWatchtower("/map-refresh/progress");
+      if (progress.error) throw new Error(progress.error);
+      if (progress.active && progress.phase === "fetch" && progress.total) {
+        const label = `Buscando ${progress.done}/${progress.total}`;
+        setWatchtowerButtonState({ label, status: `Watchtower: ${label}.`, kind: "syncing", disabled: true });
+      } else if (progress.active) {
+        setWatchtowerButtonState({ label: "Montando mapa...", status: "Watchtower está preparando os dados do mapa.", kind: "syncing", disabled: true });
+      }
+      if (Date.now() > deadline) throw new Error("A atualização demorou mais que o esperado.");
+    } while (progress.active);
+
+    if (progress.phase !== "done") {
+      throw new Error("O Watchtower não concluiu a atualização.");
+    }
+
+    const payload = await requestWatchtower("/map-data");
+    if (!Array.isArray(payload.performance?.zones) || !Array.isArray(payload.focus?.zones)) {
+      throw new Error("O Watchtower retornou dados incompletos para o mapa.");
+    }
+
+    const snapshot = { ...payload, syncedAt: new Date().toISOString() };
+    let persisted = true;
+    try {
+      localStorage.setItem(WATCHTOWER_SNAPSHOT_KEY, JSON.stringify(snapshot));
+    } catch {
+      persisted = false;
+    }
+    applyWatchtowerSnapshot(snapshot);
+    refreshModeText();
+    refreshLayerVisibility();
+    applyFilterChanges();
+
+    const period = watchtowerPeriodLabel(snapshot.performance.source);
+    const persistenceNote = persisted
+      ? "Os dados ficarão guardados neste navegador."
+      : "Dados aplicados, mas não foi possível guardá-los neste navegador.";
+    setWatchtowerButtonState({
+      label: "Watchtower",
+      status: `Mapa atualizado pelo Watchtower${period ? `, produção até ${period}` : ""}. ${persistenceNote}`,
+      kind: "synced",
+      title: `Sincronizado pelo Watchtower${period ? ` · produção até ${period}` : ""}. Clique para atualizar novamente.`,
+      disabled: false,
+    });
+  } catch (error) {
+    const message = error instanceof TypeError
+      ? "Não consegui acessar localhost:4320. Abra o Watchtower e permita o acesso à rede local para este mapa."
+      : error.message || "Falha ao sincronizar com o Watchtower.";
+    setWatchtowerButtonState({
+      label: "Tentar novamente",
+      status: message,
+      kind: "error",
+      title: message,
+      disabled: false,
+    });
+    window.setTimeout(() => {
+      if (!watchtowerSyncButton.disabled) {
+        setWatchtowerButtonState({ label: "Watchtower", kind: "", disabled: false });
+      }
+    }, 7000);
+  }
+}
+
 function isSecretFocusZone(zoneId) {
   return state.secretFocusZoneIds.has(zoneId);
 }
@@ -1985,6 +2139,7 @@ function setupControls() {
     refreshLayerVisibility();
     applyFilterChanges();
   });
+  watchtowerSyncButton?.addEventListener("click", syncFromWatchtower);
 
   modeSelect.addEventListener("change", (event) => {
     const nextMode = String(event.target.value || "population");
@@ -2131,12 +2286,23 @@ async function loadData() {
     state.zoneById.set(zone.zoneId, zone);
   }
 
+  let staticPerformancePayload = null;
   if (performanceResp?.ok) {
-    attachZonePerformanceData(await performanceResp.json());
+    staticPerformancePayload = await performanceResp.json();
+    attachZonePerformanceData(staticPerformancePayload);
   }
 
   if (secretFocusResp?.ok) {
     attachSecretFocusData(await secretFocusResp.json());
+  }
+
+  const savedWatchtowerSnapshot = readSavedWatchtowerSnapshot();
+  const useSavedWatchtowerSnapshot = shouldUseSavedWatchtowerSnapshot(
+    savedWatchtowerSnapshot,
+    staticPerformancePayload,
+  );
+  if (useSavedWatchtowerSnapshot) {
+    applyWatchtowerSnapshot(savedWatchtowerSnapshot);
   }
 
   state.activeZoneIds = new Set(state.zones.map((zone) => zone.zoneId));
@@ -2177,6 +2343,14 @@ async function loadData() {
   refreshStateTitle();
   state.dataReady = true;
   document.querySelector("#map-loading").hidden = true;
+  setWatchtowerButtonState({
+    label: "Watchtower",
+    kind: useSavedWatchtowerSnapshot ? "synced" : "",
+    title: useSavedWatchtowerSnapshot
+      ? `Última sincronização pelo Watchtower${watchtowerPeriodLabel(savedWatchtowerSnapshot.performance.source) ? ` · produção até ${watchtowerPeriodLabel(savedWatchtowerSnapshot.performance.source)}` : ""}. Clique para atualizar novamente.`
+      : "Buscar e atualizar os dados pelo Watchtower local.",
+    disabled: false,
+  });
   refreshLayerVisibility();
   refreshModeText();
   renderZoneList();

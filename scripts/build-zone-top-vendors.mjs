@@ -35,7 +35,7 @@ with zipfile.ZipFile(sys.argv[1]) as book:
                     value = None
                 elif kind == 's':
                     value = strings[int(value.text)]
-                elif kind in ('str', 'e'):
+                elif kind in ('str', 'e', 'd'):
                     value = value.text
                 else:
                     value = float(value.text)
