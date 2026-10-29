@@ -725,6 +725,8 @@ h2 {
   margin-top: 4px;
 }
 .map-area {
+  grid-column: 2;
+  grid-row: 2;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -924,7 +926,8 @@ h2 {
   border: 1.5px dashed #387779;
 }
 .swatch.combined {
-  border: 1.5px dashed #387779;
+  border: 1.5px solid #181d19;
+  background: #c5d9ad;
 }
 .swatch.hotspot {
   border-color: #bd722e;
@@ -967,7 +970,7 @@ h2 {
   font:
     800 15px/28px "Libre Franklin",
     sans-serif;
-  color: #202720;
+  color: #111714;
   text-align: center;
   letter-spacing: -0.65px;
   text-shadow:
@@ -1036,17 +1039,13 @@ h2 {
   background: #525e49;
 }
 .county-label {
-  color: #176664;
+  color: #69736c;
   font:
-    600 10px/18px "DM Sans",
+    500 11px/18px "DM Sans",
     sans-serif;
   text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  text-shadow:
-    0 0 3px white,
-    1px 1px 0 white,
-    -1px -1px 0 white;
+  letter-spacing: 0;
+  text-shadow: 0 0 2px #fff9e8aa;
 }
 .leaflet-popup-content-wrapper {
   border-radius: 9px;

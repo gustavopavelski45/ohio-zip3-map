@@ -1,10 +1,20 @@
 const PALETTE = [
-  "#e7dba0",
-  "#bbce9e",
-  "#bfb5cf",
-  "#a9c5ce",
-  "#e9b39b",
-  "#d1d9ab",
+  "#efd0aa",
+  "#b9afca",
+  "#d8e7a7",
+  "#c1d5b1",
+  "#efc294",
+  "#c6bfd4",
+  "#b8cfdb",
+  "#a7c5aa",
+  "#b1aac6",
+  "#ead8aa",
+  "#bad1bc",
+  "#efa99a",
+  "#f8df99",
+  "#e9ad9b",
+  "#a2bfd0",
+  "#f7d998",
 ];
 
 export function zoneColor(zip3, stateCode = "") {

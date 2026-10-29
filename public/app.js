@@ -6,7 +6,7 @@ import {
   zoneVolumeLabel,
   zoneOnTimeLabel,
   productionPeriodLabel,
-} from "./atlas-utils.js?v=all-us-v29";
+} from "./atlas-utils.js?v=all-us-v30";
 
 const map = L.map("map", {
   zoomControl: false,
@@ -15,7 +15,7 @@ const map = L.map("map", {
   minZoom: 3,
 });
 
-const DATA_VERSION = "all-us-v29";
+const DATA_VERSION = "all-us-v30";
 const WATCHTOWER_API = "http://localhost:4320/api";
 const WATCHTOWER_SNAPSHOT_KEY = "pavelski-zope-map-watchtower-v1";
 
@@ -37,7 +37,7 @@ function createMapPane(name, zIndex, pointerEvents = "auto") {
 createMapPane("county-fill-pane", 380);
 createMapPane("zip3-pane", 430);
 createMapPane("county-outline-pane", 470, "none");
-createMapPane("secret-focus-pane", 476, "none");
+createMapPane("secret-focus-pane", 445, "none");
 
 createMapPane("primary-county-pane", 490, "none");
 
@@ -88,6 +88,7 @@ const state = {
   countyByFips: new Map(),
   countyFeatureByFips: new Map(),
   boundsByZoneId: new Map(),
+  zoneGeojson: null,
   zoneLayer: null,
   secretFocusLayer: null,
   secretFocusEnabled: false,
@@ -108,7 +109,7 @@ const state = {
     housingMin: "",
   },
   mapShowsFilteredZones: true,
-  mapLayerMode: "zip3",
+  mapLayerMode: "both",
   popupMode: "summary",
   showCities: true,
   showZip3Labels: true,
@@ -576,40 +577,42 @@ function styleForFeature(feature) {
       weight: selected ? 2.5 : 1.1,
       opacity: covered ? 0 : 0.8,
       fillColor: "#d8ddd2",
-      fillOpacity: covered ? 0 : 0.34,
+      fillOpacity: covered ? 0 : 0.9,
       dashArray: null,
     };
   }
   const hotspot = state.highlightHotspots && isZoneHotspot(zone);
   return {
-    color: hotspot && !selected ? "#9a6226" : "#262a23",
-    weight: selected ? 3 : 1.65,
+    color: hotspot && !selected ? "#9a6226" : "#181d19",
+    weight: selected ? 3 : 2.1,
     opacity: 1,
     fillColor: colorForZone(zone),
-    fillOpacity: selected ? 0.7 : state.mapLayerMode === "both" ? 0.35 : 0.58,
+    fillOpacity: selected ? 0.97 : 0.94,
     dashArray: hotspot && !selected ? "5,3" : null,
     lineJoin: "round",
   };
 }
 
 function styleForCountyFeature(feature) {
+  const combined = state.mapLayerMode === "both";
   return {
     color: "#377d79",
     weight: 1.25,
-    opacity: 0.85,
+    opacity: combined ? 0 : 0.85,
     fillColor: colorForCounty(feature),
-    fillOpacity: state.mapLayerMode === "both" ? 0.15 : 0.58,
+    fillOpacity: combined ? 0 : 0.7,
     dashArray: "5,4",
   };
 }
 
 function styleForCountyOutlineFeature() {
   return {
-    color: "#247e7c",
-    weight: 1.3,
-    opacity: 0.9,
+    color: "#505d57",
+    weight: 0.8,
+    opacity: 0.8,
     fillOpacity: 0,
-    dashArray: "5,4",
+    dashArray: "1,4",
+    lineCap: "round",
     interactive: false,
   };
 }
@@ -621,7 +624,7 @@ function styleForSecretFocusFeature(feature) {
     weight: state.selectedZoneId === feature.properties.zoneId ? 3.5 : 2.6,
     opacity: visible ? 0.95 : 0,
     fillColor: "#ec7eae",
-    fillOpacity: visible ? 0.68 : 0,
+    fillOpacity: visible ? 0.88 : 0,
     interactive: false,
   };
 }
@@ -1144,6 +1147,7 @@ function buildCountyLayers(geojson) {
 
       return {
         ...center,
+        name: feature.properties?.countyName || "County",
         label:
           feature.properties?.label ||
           `${feature.properties?.countyName || "County"}, ${feature.properties?.state || ""}`,
@@ -1172,7 +1176,13 @@ function buildCountyLayers(geojson) {
 }
 
 function buildSecretFocusLayer(geojson) {
-  const focusFeatures = (geojson.features || []).filter((feature) =>
+  // Watchtower synchronization can change which zones belong to the coverage.
+  if (state.secretFocusLayer && map.hasLayer(state.secretFocusLayer)) {
+    map.removeLayer(state.secretFocusLayer);
+  }
+  state.secretFocusLayer = null;
+
+  const focusFeatures = (geojson?.features || []).filter((feature) =>
     state.secretFocusZoneIds.has(feature.properties?.zoneId),
   );
 
@@ -1194,6 +1204,7 @@ function buildSecretFocusLayer(geojson) {
 }
 
 function buildZoneLayer(geojson) {
+  state.zoneGeojson = geojson;
   buildSecretFocusLayer(geojson);
 
   state.zoneLayer = L.geoJSON(geojson, {
@@ -1360,8 +1371,8 @@ function renderZip3Labels() {
     const volume = zoneVolumeLabel(zone);
     const onTime = zoneOnTimeLabel(zone);
     const width = state.showZoneVolume
-      ? 98 + Math.max(volume.length, onTime.length) * 7
-      : 58;
+      ? 106 + Math.max(volume.length, onTime.length) * 7
+      : 60;
     const height = state.showZoneVolume ? 38 : 28;
     if (!reserveLabel(point, width, height)) continue;
     zip3LayerGroup.addLayer(
@@ -1370,7 +1381,7 @@ function renderZip3Labels() {
         keyboard: false,
         icon: L.divIcon({
           className: `zip3-label${state.showZoneVolume ? " with-volume" : ""}${zone.zoneId === state.selectedZoneId ? " selected" : ""}${state.secretFocusEnabled ? (isSecretFocusZone(zone.zoneId) ? " covered" : " neighbor") : ""}`,
-          html: `<span class="zip3-code">Z${escapeHtml(zone.zip3)}</span>${state.showZoneVolume ? ` <span class="zip3-metrics"><span class="zip3-volume" aria-label="Volume total de 30 dias: ${volume}"><small>Vol</small> ${volume}</span><span class="zip3-on-time" aria-label="On-time de 30 dias: ${onTime}"><small>OT</small> ${onTime}</span></span>` : ""}`,
+          html: `<span class="zip3-code">${escapeHtml(zone.state)}Z${escapeHtml(zone.zip3)}</span>${state.showZoneVolume ? ` <span class="zip3-metrics"><span class="zip3-volume" aria-label="Volume total de 30 dias: ${volume}"><small>Vol</small> ${volume}</span><span class="zip3-on-time" aria-label="On-time de 30 dias: ${onTime}"><small>OT</small> ${onTime}</span></span>` : ""}`,
           iconSize: [width, height],
           iconAnchor: [width / 2, height / 2],
         }),
@@ -1386,9 +1397,9 @@ function renderCountyLabels() {
   for (const county of state.countyLabelPoints) {
     if (!map.getBounds().contains([county.latitude, county.longitude]))
       continue;
-    const name = county.label.replace(/,?\s+[A-Z]{2}$/, "");
-    const width = Math.max(70, name.length * 7);
-    if (!reserveLabel(county, width, 22)) continue;
+    const name = county.name;
+    const width = Math.max(32, name.length * 6 + 8);
+    if (!reserveLabel(county, width, 16)) continue;
     countyLabelLayerGroup.addLayer(
       L.marker([county.latitude, county.longitude], {
         interactive: false,
@@ -1407,12 +1418,19 @@ function renderCountyLabels() {
 function renderCityLabels() {
   cityLayerGroup.clearLayers();
   if (!state.showCities || map.getZoom() < 6) return;
+  const zoom = map.getZoom();
+  const minPopulation =
+    zoom < 7 ? 150000 :
+    zoom < 8 ? 100000 :
+    zoom < 9 ? 50000 :
+    zoom < 10 ? 10000 : 0;
   const bounds = map.getBounds();
   const cities = state.cities
     .filter(
       (city) =>
         Number.isFinite(city.latitude) &&
         Number.isFinite(city.longitude) &&
+        city.population >= minPopulation &&
         bounds.contains([city.latitude, city.longitude]) &&
         city.zoneIds.some(isActiveZone),
     )
@@ -1500,8 +1518,8 @@ function renderLabels() {
     };
   });
   renderZip3Labels();
-  renderCountyLabels();
   renderCityLabels();
+  renderCountyLabels();
 }
 function refreshStateTitle() {
   document.querySelector("#map-state-title").textContent =
@@ -1814,6 +1832,7 @@ async function syncFromWatchtower() {
       persisted = false;
     }
     applyWatchtowerSnapshot(snapshot);
+    buildSecretFocusLayer(state.zoneGeojson);
     refreshModeText();
     refreshLayerVisibility();
     applyFilterChanges();
